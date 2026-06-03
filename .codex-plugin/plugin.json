@@ -16,7 +16,6 @@
     "code-review",
     "automation"
   ],
-  "skills": "./skills/",
   "interface": {
     "displayName": "Auto Review",
     "shortDescription": "Review edited turns automatically",
