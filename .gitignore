@@ -1,0 +1,3 @@
+node_modules/
+.tmp-ultracode-*
+.ultracode-auto-review-*.js

@@ -1,0 +1,12 @@
+{
+  "name": "@just-every/plugin-auto-review",
+  "description": "Codex Auto Review plugin using hooks.",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/just-every/plugin-auto-review.git"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\""
+  }
+}
