@@ -19,9 +19,10 @@ Codex currently does not expose a first-class `codex plugin hooks enable` comman
 This repo includes a helper that uses Codex app-server `hooks/list` and `config/batchWrite`, the same config path the UI uses, to persist the current hook hashes under `hooks.state` and set them enabled:
 
 ```bash
-npm run trust-hooks -- --codex-home "$HOME/.codex" --cwd /path/to/project
-npm run trust-hooks -- --codex-home "$HOME/.codex_zemaj" --cwd /path/to/project
+npm run trust-hooks -- --cwd /path/to/project
 ```
+
+`--cwd` is the Codex project/workspace whose effective hook config should be inspected. Use the repo root you normally open in Codex; if you run the helper from that workspace, `--cwd "$PWD"` is fine.
 
 Use `--dry-run` to inspect the hooks without writing config. If Auto Review was installed from a different marketplace, pass its exact plugin id, for example `--plugin-id auto-review@local`.
 
