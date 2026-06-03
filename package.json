@@ -20,7 +20,7 @@
     "package.json"
   ],
   "scripts": {
-    "test": "node --test \"test/**/*.test.js\"",
+    "test": "node --test test/*.test.js",
     "trust-hooks": "node scripts/trust-hooks.js"
   },
   "publishConfig": {
