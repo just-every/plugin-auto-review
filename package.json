@@ -7,6 +7,7 @@
     "url": "https://github.com/just-every/plugin-auto-review.git"
   },
   "scripts": {
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --test \"test/**/*.test.js\"",
+    "trust-hooks": "node scripts/trust-hooks.js"
   }
 }

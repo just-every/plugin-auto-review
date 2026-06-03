@@ -4,6 +4,29 @@ Auto Review is a Codex plugin that runs code review from hooks. It captures a tu
 
 The review runner uses real `codex exec` subprocesses in parallel and validates every reviewer response against a strict JSON schema. If snapshotting, subprocess execution, or schema validation fails, the Stop hook blocks with a visible diagnostic.
 
+## Install
+
+```bash
+codex plugin marketplace add just-every/plugins
+codex plugin marketplace upgrade just-every
+codex plugin add auto-review@just-every
+```
+
+## Enable Hooks
+
+Codex currently does not expose a first-class `codex plugin hooks enable` command. Plugin enablement and hook trust are separate: Auto Review can be installed and enabled while its hooks still require trust before they run.
+
+This repo includes a helper that uses Codex app-server `hooks/list` and `config/batchWrite`, the same config path the UI uses, to persist the current hook hashes under `hooks.state` and set them enabled:
+
+```bash
+npm run trust-hooks -- --codex-home "$HOME/.codex" --cwd /path/to/project
+npm run trust-hooks -- --codex-home "$HOME/.codex_zemaj" --cwd /path/to/project
+```
+
+Use `--dry-run` to inspect the hooks without writing config. If Auto Review was installed from a different marketplace, pass its exact plugin id, for example `--plugin-id auto-review@local`.
+
+`codex --dangerously-bypass-hook-trust` can run enabled hooks without persisted trust for a single invocation, but it is not a persistent setup command.
+
 ## Hooks
 
 - `hooks/hooks.json` defines `UserPromptSubmit`, `PostToolUse` for `apply_patch`, and `Stop`.
