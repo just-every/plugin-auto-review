@@ -119,18 +119,18 @@ jobs:
 
       - name: Create GitHub Release
         if: steps.should_publish.outputs.publish == 'true'
-        uses: actions/create-release@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: plugin-auto-review-v${{ env.VERSION }}
-          release_name: plugin-auto-review v${{ env.VERSION }}
-          body: |
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat > release-notes.md <<'EOF'
             Released @just-every/plugin-auto-review@${{ env.VERSION }} to npm.
 
             Trust hooks with:
             ```bash
             npx -y @just-every/plugin-auto-review trust-hooks
             ```
-          draft: false
-          prerelease: false
+          EOF
+          gh release create "plugin-auto-review-v${VERSION}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "plugin-auto-review v${VERSION}" \
+            --notes-file release-notes.md
