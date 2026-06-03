@@ -4,13 +4,20 @@
 const { DEFAULT_PLUGIN_ID, trustPluginHooks } = require("./lib/hooks-trust");
 
 async function main() {
-  const options = parseArgs(process.argv.slice(2));
+  const options = parseArgs(normalizeArgs(process.argv.slice(2)));
   const result = await trustPluginHooks(options);
   if (options.json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return;
   }
   process.stdout.write(formatReport(result));
+}
+
+function normalizeArgs(args) {
+  if (args[0] === "trust-hooks") {
+    return args.slice(1);
+  }
+  return args;
 }
 
 function parseArgs(args) {
@@ -73,12 +80,12 @@ function formatReport(result) {
 }
 
 function helpText() {
-  return `Usage: node scripts/trust-hooks.js [options]
+  return `Usage: plugin-auto-review trust-hooks [options]
 
 Trust and enable Auto Review plugin hooks for a Codex home.
 
 Options:
-  --cwd <path>          Project cwd used to discover effective hooks (default: current directory)
+  --cwd <path>          Project cwd used to discover effective hooks (default: npm's invoking directory, then current directory)
   --plugin-id <id>      Plugin id to trust (default: ${DEFAULT_PLUGIN_ID})
   --codex-home <path>   Codex home to update (default: CODEX_HOME or ~/.codex)
   --codex <path>        Codex executable (default: CODEX_CLI_PATH or codex)

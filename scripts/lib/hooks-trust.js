@@ -6,14 +6,15 @@ const { AppServerJsonlClient } = require("./app-server-client");
 
 const DEFAULT_PLUGIN_ID = "auto-review@just-every";
 
-async function trustPluginHooks({
-  cwd = process.cwd(),
-  pluginId = DEFAULT_PLUGIN_ID,
-  codexPath,
-  codexHome,
-  env,
-  dryRun = false
-} = {}) {
+async function trustPluginHooks(options = {}) {
+  const env = options.env || process.env;
+  const cwd = options.cwd || env.INIT_CWD || process.env.INIT_CWD || process.cwd();
+  const {
+    pluginId = DEFAULT_PLUGIN_ID,
+    codexPath,
+    codexHome,
+    dryRun = false
+  } = options;
   const resolvedCwd = path.resolve(cwd);
   const client = new AppServerJsonlClient({
     codexPath,

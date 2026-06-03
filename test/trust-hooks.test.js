@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert");
+const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
@@ -76,6 +77,52 @@ test("trustPluginHooks dry-run lists updates without writing config", async () =
   );
 });
 
+test("trustPluginHooks defaults to npm's invoking directory when available", async () => {
+  fs.chmodSync(MOCK_APP_SERVER_CODEX, 0o755);
+  const invokingDir = tempDir("auto-review-invoking-workspace-");
+
+  const result = await trustPluginHooks({
+    codexHome: "/tmp/auto-review-codex-home",
+    codexPath: MOCK_APP_SERVER_CODEX,
+    dryRun: true,
+    env: {
+      ...process.env,
+      INIT_CWD: invokingDir
+    }
+  });
+
+  assert.strictEqual(result.cwd, invokingDir);
+});
+
+test("trust-hooks CLI accepts the npx-style trust-hooks subcommand", () => {
+  fs.chmodSync(MOCK_APP_SERVER_CODEX, 0o755);
+  const cwd = tempDir("auto-review-cli-workspace-");
+  const result = childProcess.spawnSync(
+    process.execPath,
+    [
+      path.join(__dirname, "..", "scripts", "trust-hooks.js"),
+      "trust-hooks",
+      "--dry-run",
+      "--codex",
+      MOCK_APP_SERVER_CODEX,
+      "--codex-home",
+      "/tmp/auto-review-codex-home"
+    ],
+    {
+      cwd,
+      env: {
+        ...process.env,
+        INIT_CWD: cwd
+      },
+      encoding: "utf8"
+    }
+  );
+
+  assert.strictEqual(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Would trust and enable 3 auto-review@just-every hooks/);
+  assert.match(result.stdout, new RegExp(`CWD: ${escapeRegExp(cwd)}`));
+});
+
 test("trustPluginHooks fails when the plugin hooks are not installed", async () => {
   fs.chmodSync(MOCK_APP_SERVER_CODEX, 0o755);
   await assert.rejects(
@@ -100,4 +147,8 @@ function readRequests(file) {
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line));
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

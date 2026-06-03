@@ -1,0 +1,136 @@
+name: Release plugin-auto-review
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .codex-plugin/**
+      - assets/**
+      - hooks/**
+      - scripts/**
+      - package.json
+      - README.md
+      - .github/workflows/release.yml
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version bump
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-plugin-auto-review-${{ github.ref }}-${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[skip ci]') && 'skip' || 'main' }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    name: Publish @just-every/plugin-auto-review
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[skip ci]')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Check whether to publish
+        id: should_publish
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.sha }}"
+          if [ -z "${BEFORE:-}" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$BEFORE" "$AFTER" | grep -E '^(\.codex-plugin/|assets/|hooks/|scripts/|package.json|README.md|\.github/workflows/release\.yml)'; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: https://registry.npmjs.org
+
+      - name: Test
+        run: npm test
+
+      - name: Bump version, commit, and tag
+        id: version
+        if: steps.should_publish.outputs.publish == 'true'
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "NPM_TOKEN not set; cannot publish" >&2
+            exit 1
+          fi
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          BUMP="patch"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            BUMP="${{ github.event.inputs.version }}"
+          fi
+          BUMP_KIND="$BUMP" node -e 'const fs=require("node:fs");const bump=(pkg)=>{let [major,minor,patch]=pkg.version.split(".").map(Number);const kind=process.env.BUMP_KIND||"patch";if(kind==="major"){major+=1;minor=0;patch=0}else if(kind==="minor"){minor+=1;patch=0}else{patch+=1}pkg.version=`${major}.${minor}.${patch}`;};const pkg=JSON.parse(fs.readFileSync("package.json","utf8"));bump(pkg);fs.writeFileSync("package.json",JSON.stringify(pkg,null,2)+"\n");const pluginPath=".codex-plugin/plugin.json";const plugin=JSON.parse(fs.readFileSync(pluginPath,"utf8"));plugin.version=pkg.version;fs.writeFileSync(pluginPath,JSON.stringify(plugin,null,2)+"\n");'
+          VERSION=$(node -p "require('./package.json').version")
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          git add package.json .codex-plugin/plugin.json
+          git commit -m "chore(release): @just-every/plugin-auto-review v${VERSION} [skip ci]"
+          git tag "plugin-auto-review-v${VERSION}"
+
+      - name: Verify package contents
+        if: steps.should_publish.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          npm pack --dry-run --json --ignore-scripts > pack.json
+          node -e 'const fs=require("node:fs");const pack=JSON.parse(fs.readFileSync("pack.json","utf8"))[0];const files=pack.files.map((entry)=>entry.path);const forbidden=files.filter((path)=>path.startsWith("test/")||/\\.test\\.(js|mjs|cjs)$/.test(path));if(forbidden.length){console.error(`Package includes tests:\\n${forbidden.join("\\n")}`);process.exit(1)}for(const required of ["scripts/trust-hooks.js","scripts/lib/hooks-trust.js","scripts/lib/app-server-client.js","hooks/hooks.json",".codex-plugin/plugin.json","README.md","package.json"]){if(!files.includes(required)){console.error(`Package is missing ${required}`);process.exit(1)}}'
+
+      - name: Publish to npm
+        if: steps.should_publish.outputs.publish == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
+
+      - name: Push changes
+        if: steps.should_publish.outputs.publish == 'true'
+        run: |
+          git push origin main
+          git push origin --tags
+
+      - name: Create GitHub Release
+        if: steps.should_publish.outputs.publish == 'true'
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: plugin-auto-review-v${{ env.VERSION }}
+          release_name: plugin-auto-review v${{ env.VERSION }}
+          body: |
+            Released @just-every/plugin-auto-review@${{ env.VERSION }} to npm.
+
+            Trust hooks with:
+            ```bash
+            npx -y @just-every/plugin-auto-review trust-hooks
+            ```
+          draft: false
+          prerelease: false
