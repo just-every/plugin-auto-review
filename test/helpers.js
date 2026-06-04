@@ -6,6 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const ROOT = path.resolve(__dirname, "..");
+const MOCK_CODEX = path.join(__dirname, "fixtures", "mock-codex.js");
 
 function tempDir(name) {
   return fs.mkdtempSync(path.join(os.tmpdir(), name));
@@ -68,22 +69,11 @@ function prepareEditedTurn(repo, pluginData, env = {}) {
   if (user.status !== 0) throw new Error(user.stderr);
 
   fs.writeFileSync(path.join(repo, "src", "app.js"), "module.exports = 2;\n", "utf8");
-
-  const post = runHook(
-    "post-tool-use.js",
-    hookInput("PostToolUse", repo, {
-      tool_name: "apply_patch",
-      tool_use_id: "tool-1",
-      tool_input: { command: "apply patch" },
-      tool_response: { output: "Success" }
-    }),
-    { PLUGIN_DATA: pluginData, ...env }
-  );
-  if (post.status !== 0) throw new Error(post.stderr);
-  return { user, post };
+  return { user };
 }
 
 module.exports = {
+  MOCK_CODEX,
   createRepo,
   hookInput,
   prepareEditedTurn,

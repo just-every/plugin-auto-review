@@ -2,7 +2,7 @@
 
 const childProcess = require("node:child_process");
 
-const { resolveCodexHome } = require("./agent-setup");
+const { resolveCodexHome } = require("./codex-home");
 const { DEFAULT_PLUGIN_ID } = require("./hooks-trust");
 
 const PLUGIN_INSTALL_STEPS = [

@@ -2,11 +2,11 @@
 
 Part of the [Just Every Codex plugin marketplace](https://github.com/just-every/plugins).
 
-Auto Code Review gives Codex a peer programmer that reviews code as it is written. It runs a continuous, token-efficient review loop alongside the main agent, catches issues while the work is still fresh, and feeds clear findings back before the turn is allowed to finish.
+Auto Code Review gives Codex a peer programmer that reviews code as it is written. It runs a token-efficient review pass over the code the agent actually changed, catches meaningful regressions while the work is still fresh, and feeds clear findings back before the turn is allowed to finish.
 
-The goal is fast, useful feedback without making the main agent reread the whole repository or wait for a heavy review pass after the fact. Auto Code Review watches the code the agent actually changed, asks a dedicated reviewer to inspect that checkpoint, and only interrupts when there is something real to fix.
+The goal is fast, useful feedback without making the main agent reread the whole repository or perform its own second pass after the fact. Auto Code Review watches the diff, runs focused reviewer workers at Stop, and only interrupts when there is something real to fix.
 
-Use it when you want AI coding sessions to feel more like pairing with a careful teammate: the main agent keeps building, while a focused reviewer checks the diff for bugs, regressions, missed edge cases, and unsafe assumptions.
+Use it when you want AI coding sessions to feel more like pairing with a careful teammate: the main agent keeps building, while a focused review pass checks the diff for genuine bugs, regressions, broken contracts, and unsafe behavior. It is intentionally not a style, architecture, or preference review.
 
 ## Install
 
@@ -20,9 +20,9 @@ The setup helper runs the full happy path:
 - `codex plugin marketplace upgrade just-every`
 - `codex plugin add auto-review@just-every`
 - trust and enable the Auto Code Review hooks
-- install or update `$CODEX_HOME/agents/auto-review.toml`
+- remove stale Auto Code Review custom-agent config
 
-Auto Code Review can run immediately after setup. Reopen Codex when convenient to load the dedicated `auto-review` custom agent type for the nicer visible `Auto Code Review` subagent UI.
+Auto Code Review can run immediately after setup. No custom agent or Codex restart is required.
 
 ## Manual Setup
 
@@ -40,7 +40,7 @@ Then trust the plugin hooks through the Codex `/hooks` UI, or run the compatibil
 npx -y @just-every/plugin-auto-review trust-hooks
 ```
 
-`trust-hooks` uses Codex app-server `hooks/list` and `config/batchWrite`, the same config path the UI uses, to persist the current hook hashes under `hooks.state` and set them enabled. It also installs or updates the custom Auto Code Review agent.
+`trust-hooks` uses Codex app-server `hooks/list` and `config/batchWrite`, the same config path the UI uses, to persist the current hook hashes under `hooks.state` and set them enabled.
 
 Plugin enablement and hook trust are separate: Auto Code Review can be installed and enabled while its hooks still require trust before they run.
 
@@ -64,15 +64,14 @@ npx -y @just-every/plugin-auto-review trust-hooks --plugin-id auto-review@local
 
 ## How It Works
 
-Auto Code Review captures a lightweight baseline at the start of a turn, notices when Codex edits files, and creates a review checkpoint when the turn tries to stop. A visible `Auto Code Review` subagent loads that checkpoint, reviews the changed code itself, reports findings in the parent thread, and records a small reviewed receipt.
+Auto Code Review captures a lightweight baseline at the start of a turn and reviews the final baseline-to-stop diff when the turn tries to stop.
 
-Clean receipts let the next Stop finish. Finding receipts keep completion blocked with a short pointer back to the Auto Code Review subagent result, so the hook enforces review without replaying the review details itself.
+The Stop hook runs parallel Codex reviewer workers from writable per-lane job directories, with the captured final snapshot passed as read-only review context outside the worker cwd. Workers use schema-constrained output, `gpt-5.5`, medium reasoning, and default service tier. Clean reviews finish silently. Findings are returned through the hook as normal Stop feedback so the main agent can fix them immediately. After any review attempt, the final snapshot becomes the next baseline, so later Stops review only new changes. Review infrastructure failures write diagnostics to stderr and fail open.
 
-- `hooks/hooks.json` defines `UserPromptSubmit`, `PostToolUse` for `apply_patch`, and `Stop`.
+- `hooks/hooks.json` defines `UserPromptSubmit` and `Stop`.
 - Hook state is stored under `${PLUGIN_DATA}`.
-- Stop checkpoints are stored under `${PLUGIN_DATA}/checkpoints`.
-- The Auto Code Review subagent reviews the latest pending checkpoint for the current repository.
-- The checkpoint helper only prints diff context and records reviewed receipts; it does not run a review model.
+- After each review attempt, the final snapshot becomes the next baseline, so later Stops review only new changes.
+- The review workers write only under their review-job directory; the captured final snapshot is outside the worker cwd, treated as read-only review input, and removed after Stop advances the baseline.
 
 ## Development
 

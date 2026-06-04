@@ -7,13 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
-const {
-  codexHomeFromPluginData,
-  checkpointCommand,
-  installAutoReviewAgent,
-  installedPluginRoot,
-  resolveCodexHome
-} = require("../scripts/lib/agent-setup");
+const { resolveCodexHome } = require("../scripts/lib/codex-home");
 const { trustPluginHooks } = require("../scripts/lib/hooks-trust");
 const { tempDir } = require("./helpers");
 
@@ -33,11 +27,10 @@ test("trustPluginHooks writes trusted hashes and enables plugin hooks", async ()
     }
   });
 
-  assert.strictEqual(result.updatedCount, 3);
+  assert.strictEqual(result.updatedCount, 2);
   assert.deepStrictEqual(
     result.hooks.map((hook) => [hook.eventName, hook.trustStatus, hook.enabled]),
     [
-      ["postToolUse", "trusted", true],
       ["userPromptSubmit", "trusted", true],
       ["stop", "trusted", true]
     ]
@@ -48,10 +41,6 @@ test("trustPluginHooks writes trusted hashes and enables plugin hooks", async ()
   const edit = writes[0].params.edits[0];
   assert.strictEqual(edit.keyPath, "hooks.state");
   assert.strictEqual(edit.mergeStrategy, "upsert");
-  assert.deepStrictEqual(edit.value["auto-review@just-every:hooks/hooks.json:post_tool_use:0:0"], {
-    trusted_hash: "sha256:post",
-    enabled: true
-  });
   assert.deepStrictEqual(edit.value["auto-review@just-every:hooks/hooks.json:user_prompt_submit:0:0"], {
     trusted_hash: "sha256:user",
     enabled: true
@@ -78,7 +67,7 @@ test("trustPluginHooks dry-run lists updates without writing config", async () =
   });
 
   assert.strictEqual(result.dryRun, true);
-  assert.strictEqual(result.updatedCount, 3);
+  assert.strictEqual(result.updatedCount, 2);
   assert.strictEqual(
     readRequests(requestsPath).filter((request) => request.method === "config/batchWrite").length,
     0
@@ -129,10 +118,9 @@ test("trust-hooks CLI accepts the npx-style trust-hooks subcommand", () => {
 
   assert.strictEqual(result.status, 0, result.stderr);
   assert.match(result.stdout, /`trust-hooks` is kept for compatibility/);
-  assert.match(result.stdout, /Would trust and enable 3 auto-review@just-every hooks/);
-  assert.match(result.stdout, /Would install Auto Code Review agent/);
+  assert.match(result.stdout, /Would trust and enable 2 auto-review@just-every hooks/);
+  assert.doesNotMatch(result.stdout, /agent/i);
   assert.match(result.stdout, new RegExp(`CWD: ${escapeRegExp(cwd)}`));
-  assert.strictEqual(fs.existsSync(path.join(codexHome, "agents", "auto-review.toml")), false);
 });
 
 test("trust-hooks CLI without a subcommand remains trust-only", () => {
@@ -166,11 +154,10 @@ test("trust-hooks CLI without a subcommand remains trust-only", () => {
   assert.strictEqual(fs.existsSync(cliCommands), false);
 });
 
-test("trust-hooks CLI installs the Auto Code Review custom agent", () => {
+test("setup installs plugin commands and trusts hooks", () => {
   fs.chmodSync(MOCK_APP_SERVER_CODEX, 0o755);
   const cwd = tempDir("auto-review-cli-workspace-");
   const codexHome = tempDir("auto-review-codex-home-");
-  const pluginRoot = createPluginCache(codexHome, "auto-review@just-every", "9.9.9");
   const cliCommands = path.join(tempDir("auto-review-cli-commands-"), "commands.jsonl");
   const result = childProcess.spawnSync(
     process.execPath,
@@ -194,28 +181,11 @@ test("trust-hooks CLI installs the Auto Code Review custom agent", () => {
   );
 
   assert.strictEqual(result.status, 0, result.stderr);
-  const agentPath = path.join(codexHome, "agents", "auto-review.toml");
   assert.match(result.stdout, /Auto Code Review setup complete/);
   assert.match(result.stdout, /plugin marketplace add just-every\/plugins: completed/);
   assert.match(result.stdout, /plugin marketplace upgrade just-every: completed/);
   assert.match(result.stdout, /plugin add auto-review@just-every: completed/);
-  assert.match(result.stdout, /Installed Auto Code Review agent/);
-  const agentToml = fs.readFileSync(agentPath, "utf8");
-  assert.match(agentToml, /name = "auto-review"/);
-  assert.match(agentToml, /nickname_candidates = \["Auto Code Review"\]/);
-  assert.match(agentToml, /model = "gpt-5\.5"/);
-  assert.match(agentToml, /model_reasoning_effort = "medium"/);
-  assert.match(agentToml, /You are the reviewer/);
-  assert.match(agentToml, /Do not delegate review to another command/);
-  assert.match(agentToml, new RegExp(`${escapeRegExp(pluginRoot)}.*scripts/checkpoint\\.js`));
-  assert.match(agentToml, /context/);
-  assert.match(agentToml, /--cwd "\$PWD"/);
-  assert.match(agentToml, /--checkpoint-id <id>/);
-  assert.match(agentToml, /Repository cwd: <path>/);
-  assert.match(agentToml, /replace `"\$PWD"`/);
-  assert.match(agentToml, /run exactly one receipt command/);
-  assert.doesNotMatch(agentToml, /\$autoreview/);
-  assert.doesNotMatch(agentToml, /scripts\/autoreview\.js/);
+  assert.doesNotMatch(result.stdout, /agent/i);
   assert.deepStrictEqual(readCliCommands(cliCommands), [
     ["plugin", "marketplace", "add", "just-every/plugins"],
     ["plugin", "marketplace", "upgrade", "just-every"],
@@ -227,7 +197,6 @@ test("setup with custom plugin id installs and trusts that plugin only", () => {
   fs.chmodSync(MOCK_APP_SERVER_CODEX, 0o755);
   const cwd = tempDir("auto-review-cli-workspace-");
   const codexHome = tempDir("auto-review-codex-home-");
-  createPluginCache(codexHome, "auto-review@local", "1.0.0");
   const cliCommands = path.join(tempDir("auto-review-cli-commands-"), "commands.jsonl");
   const result = childProcess.spawnSync(
     process.execPath,
@@ -256,87 +225,59 @@ test("setup with custom plugin id installs and trusts that plugin only", () => {
   assert.strictEqual(result.status, 0, result.stderr);
   assert.match(result.stdout, /plugin add auto-review@local: completed/);
   assert.doesNotMatch(result.stdout, /marketplace add/);
-  const agentToml = fs.readFileSync(path.join(codexHome, "agents", "auto-review.toml"), "utf8");
-  assert.match(agentToml, new RegExp(`${escapeRegExp(codexHome)}/plugins/data/auto-review-local`));
   assert.deepStrictEqual(readCliCommands(cliCommands), [
     ["plugin", "add", "auto-review@local"]
   ]);
 });
 
-test("Auto Code Review agent setup expands tilde codex homes", () => {
-  assert.strictEqual(resolveCodexHome({ codexHome: "~/.codex" }), path.join(os.homedir(), ".codex"));
-});
-
-test("Auto Code Review checkpoint command defaults plugin data from codex home", () => {
+test("setup removes stale Auto Code Review custom agent config", () => {
+  fs.chmodSync(MOCK_APP_SERVER_CODEX, 0o755);
+  const cwd = tempDir("auto-review-cli-workspace-");
   const codexHome = tempDir("auto-review-codex-home-");
-  const command = checkpointCommand({ codexHome, pluginRoot: "/tmp/plugin-root" });
-  assert.match(command, new RegExp(`${escapeRegExp(codexHome)}/plugins/data/auto-review-just-every`));
-  assert.match(command, /scripts\/checkpoint\.js" context/);
-  assert.doesNotMatch(command, /scripts\/autoreview\.js/);
-});
-
-test("Auto Code Review agent install defaults plugin data from codex home", () => {
-  const codexHome = tempDir("auto-review-codex-home-");
-  const pluginRoot = createPluginCache(codexHome, "auto-review@just-every", "4.0.0");
-  const result = installAutoReviewAgent({ codexHome, pluginRoot });
-  assert.strictEqual(result.installed, true);
-  const agentToml = fs.readFileSync(path.join(codexHome, "agents", "auto-review.toml"), "utf8");
-  assert.match(agentToml, new RegExp(`${escapeRegExp(codexHome)}/plugins/data/auto-review-just-every`));
-  assert.match(agentToml, new RegExp(`${escapeRegExp(pluginRoot)}.*scripts/checkpoint\\.js`));
-  assert.doesNotMatch(agentToml, /scripts\/autoreview\.js/);
-});
-
-test("Auto Code Review agent install requires a stable plugin root", () => {
-  const codexHome = tempDir("auto-review-codex-home-");
-  assert.throws(
-    () => installAutoReviewAgent({ codexHome }),
-    /pluginRoot is required/
+  const agentDir = path.join(codexHome, "agents");
+  const agentFile = path.join(agentDir, "auto-review.toml");
+  fs.mkdirSync(agentDir, { recursive: true });
+  fs.writeFileSync(
+    agentFile,
+    [
+      'name = "auto-review"',
+      'description = "Visible Auto Code Review agent"',
+      'developer_instructions = """',
+      "Auto Code Review",
+      '"""',
+      ""
+    ].join("\n"),
+    "utf8"
   );
-});
 
-test("Auto Code Review agent setup derives codex home from plugin data", () => {
-  const codexHome = path.join(os.tmpdir(), "codex-home");
-  assert.strictEqual(
-    codexHomeFromPluginData(path.join(codexHome, "plugins", "data", "auto-review-just-every")),
-    codexHome
-  );
-  assert.strictEqual(
-    codexHomeFromPluginData(path.join(codexHome, "plugins", "data", "auto-review-just-every", "turns", "session")),
-    codexHome
-  );
-});
-
-test("Auto Code Review setup resolves the installed plugin cache root", () => {
-  const codexHome = tempDir("auto-review-codex-home-");
-  const oldRoot = createPluginCache(codexHome, "auto-review@just-every", "1.0.0");
-  const newRoot = createPluginCache(codexHome, "auto-review@just-every", "2.0.0");
-  fs.utimesSync(oldRoot, new Date(1), new Date(1));
-  fs.utimesSync(newRoot, new Date(2), new Date(2));
-  assert.strictEqual(installedPluginRoot(codexHome, "auto-review@just-every"), newRoot);
-});
-
-test("Auto Code Review setup waits briefly for plugin cache materialization", () => {
-  const codexHome = tempDir("auto-review-codex-home-");
-  const root = path.join(codexHome, "plugins", "cache", "just-every", "auto-review");
-  let calls = 0;
-  const originalReaddirSync = fs.readdirSync;
-  fs.readdirSync = function patchedReaddirSync(target, options) {
-    if (target === root && calls++ === 0) {
-      createPluginCache(codexHome, "auto-review@just-every", "3.0.0");
-      const error = new Error("not ready");
-      error.code = "ENOENT";
-      throw error;
+  const result = childProcess.spawnSync(
+    process.execPath,
+    [
+      path.join(__dirname, "..", "scripts", "trust-hooks.js"),
+      "setup",
+      "--codex",
+      MOCK_APP_SERVER_CODEX,
+      "--codex-home",
+      codexHome
+    ],
+    {
+      cwd,
+      env: {
+        ...process.env,
+        INIT_CWD: cwd,
+        MOCK_CODEX_CLI_COMMANDS: path.join(tempDir("auto-review-cli-commands-"), "commands.jsonl")
+      },
+      encoding: "utf8"
     }
-    return originalReaddirSync.call(this, target, options);
-  };
-  const startedAt = Date.now();
-  try {
-    const resolved = installedPluginRoot(codexHome, "auto-review@just-every", { attempts: 3, delayMs: 25 });
-    assert.ok(Date.now() - startedAt >= 20);
-    assert.match(resolved, /3\.0\.0$/);
-  } finally {
-    fs.readdirSync = originalReaddirSync;
-  }
+  );
+
+  assert.strictEqual(result.status, 0, result.stderr);
+  assert.match(result.stdout, /stale Auto Code Review custom agent: removed/);
+  assert.strictEqual(fs.existsSync(agentFile), false);
+});
+
+test("resolveCodexHome expands tilde codex homes", () => {
+  assert.strictEqual(resolveCodexHome({ codexHome: "~/.codex" }), path.join(os.homedir(), ".codex"));
 });
 
 test("trustPluginHooks fails when the plugin hooks are not installed", async () => {
@@ -372,14 +313,6 @@ function readCliCommands(file) {
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line));
-}
-
-function createPluginCache(codexHome, pluginId, version) {
-  const [pluginName, marketplaceName] = pluginId.split("@");
-  const root = path.join(codexHome, "plugins", "cache", marketplaceName, pluginName, version);
-  fs.mkdirSync(path.join(root, "scripts"), { recursive: true });
-  fs.writeFileSync(path.join(root, "scripts", "checkpoint.js"), "#!/usr/bin/env node\n", "utf8");
-  return root;
 }
 
 function escapeRegExp(value) {

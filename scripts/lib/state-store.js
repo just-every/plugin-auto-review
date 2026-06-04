@@ -30,9 +30,6 @@ function turnPaths(input) {
     root,
     dir,
     baselineJson: path.join(dir, "baseline.json"),
-    finalJson: path.join(dir, "final.json"),
-    markersDir: path.join(dir, "markers"),
-    receiptJson: path.join(dir, "review-receipt.json"),
     baselineSnapshotDir: path.join(dir, "snapshots", "baseline"),
     finalSnapshotDir: path.join(dir, "snapshots", "final"),
     jobDir: path.join(dir, "review-job")

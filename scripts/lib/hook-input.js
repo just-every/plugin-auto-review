@@ -1,6 +1,7 @@
 "use strict";
 
 const fs = require("node:fs");
+const path = require("node:path");
 
 function readHookInput(expectedEventName) {
   const raw = fs.readFileSync(0, "utf8").trim();
@@ -33,8 +34,10 @@ function requireString(input, field) {
   }
 }
 
-function isChildSession() {
-  return process.env.AUTO_REVIEW_CHILD === "1";
+function isChildSession(input) {
+  if (process.env.AUTO_REVIEW_CHILD !== "1") return false;
+  if (!process.env.AUTO_REVIEW_CHILD_CWD || !input || typeof input.cwd !== "string") return false;
+  return path.resolve(input.cwd) === path.resolve(process.env.AUTO_REVIEW_CHILD_CWD);
 }
 
 module.exports = {

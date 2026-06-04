@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 "use strict";
 
-const { installAutoReviewAgent, installedPluginRoot, pluginDataDir } = require("./lib/agent-setup");
 const { DEFAULT_PLUGIN_ID, trustPluginHooks } = require("./lib/hooks-trust");
+const { removeStaleAutoReviewAgent } = require("./lib/stale-agent-cleanup");
 const { installAutoReviewPlugin } = require("./lib/plugin-install");
 
 async function main() {
@@ -66,22 +66,14 @@ async function setupAutoReview(options) {
     ? installAutoReviewPlugin(options)
     : [];
   const hooks = await trustPluginHooks(options);
-  const pluginRoot = installedPluginRoot(hooks.codexHome, options.pluginId, { attempts: 10, delayMs: 100 });
-  if (options.command === "setup" && !options.dryRun && !pluginRoot) {
-    throw new Error(`Could not find installed ${options.pluginId || DEFAULT_PLUGIN_ID} plugin cache under ${hooks.codexHome}`);
-  }
-  const agent = installAutoReviewAgent({
-    codexHome: hooks.codexHome,
-    pluginId: options.pluginId,
-    pluginRoot,
-    pluginData: pluginDataDir(hooks.codexHome, hooks.pluginId),
-    dryRun: options.dryRun
-  });
+  const staleAgent = options.command === "setup"
+    ? removeStaleAutoReviewAgent({ codexHome: hooks.codexHome, dryRun: options.dryRun })
+    : null;
   return {
     ...hooks,
     command: options.command,
     pluginInstall,
-    agent
+    staleAgent
   };
 }
 
@@ -95,22 +87,19 @@ function requireValue(args, index, flag) {
 
 function formatReport(result) {
   const action = result.dryRun ? "Would trust and enable" : "Trusted and enabled";
-  const agentAction = result.agent.changed
-    ? result.dryRun
-      ? "Would install"
-      : "Installed"
-    : "Already installed";
   const lines = [
     result.command === "trust-hooks"
       ? "`trust-hooks` is kept for compatibility; use `setup` for full installation."
       : "Auto Code Review setup complete.",
     `${action} ${result.updatedCount} ${result.pluginId} hook${result.updatedCount === 1 ? "" : "s"}.`,
     `CODEX_HOME: ${result.codexHome}`,
-    `CWD: ${result.cwd}`,
-    `${agentAction} Auto Code Review agent: ${result.agent.path}`
+    `CWD: ${result.cwd}`
   ];
   for (const step of result.pluginInstall || []) {
     lines.push(`- ${step.command}: ${step.status}`);
+  }
+  if (result.staleAgent && result.staleAgent.status !== "absent") {
+    lines.push(`- stale Auto Code Review custom agent: ${result.staleAgent.status}`);
   }
   for (const hook of result.hooks) {
     const matcher = hook.matcher ? ` matcher=${hook.matcher}` : "";
@@ -123,8 +112,8 @@ function helpText() {
   return `Usage: plugin-auto-review setup [options]
        plugin-auto-review trust-hooks [options]
 
-setup installs the marketplace/plugin, trusts and enables hooks, then installs the Auto Code Review custom agent.
-trust-hooks is kept for compatibility and only runs hook trust plus agent setup.
+setup installs the marketplace/plugin, trusts and enables hooks, then removes stale custom agent config.
+trust-hooks is kept for compatibility and only runs hook trust.
 
 Options:
   --cwd <path>          Project cwd used to discover effective hooks (default: npm's invoking directory, then current directory)

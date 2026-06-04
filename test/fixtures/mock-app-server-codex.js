@@ -66,9 +66,8 @@ lines.on("line", (line) => {
 function createHooks() {
   const trusted = process.env.MOCK_APP_SERVER_ALREADY_TRUSTED === "1";
   return [
-    hook("post_tool_use", "postToolUse", "apply_patch", "sha256:post", 0, trusted),
-    hook("user_prompt_submit", "userPromptSubmit", null, "sha256:user", 1, trusted),
-    hook("stop", "stop", null, "sha256:stop", 2, trusted)
+    hook("user_prompt_submit", "userPromptSubmit", null, "sha256:user", 0, trusted),
+    hook("stop", "stop", null, "sha256:stop", 1, trusted)
   ];
 }
 

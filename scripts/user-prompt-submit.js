@@ -7,14 +7,14 @@ const { materializeSnapshot } = require("./lib/snapshot");
 const { readJsonIfExists, turnPaths, writeJsonAtomic } = require("./lib/state-store");
 
 function main() {
-  const input = readHookInput("UserPromptSubmit");
-  if (isChildSession()) {
-    writeContinue();
-    return;
-  }
-
-  const paths = turnPaths(input);
   try {
+    const input = readHookInput("UserPromptSubmit");
+    if (isChildSession(input)) {
+      writeContinue();
+      return;
+    }
+
+    const paths = turnPaths(input);
     if (readJsonIfExists(paths.baselineJson)) {
       writeContinue();
       return;
@@ -39,9 +39,4 @@ function main() {
   writeContinue();
 }
 
-try {
-  main();
-} catch (error) {
-  process.stderr.write(`${error.message}\n`);
-  process.exit(1);
-}
+main();

@@ -9,7 +9,6 @@
     "url": "git+https://github.com/just-every/plugin-auto-review.git"
   },
   "bin": {
-    "auto-review-checkpoint": "scripts/checkpoint.js",
     "plugin-auto-review": "scripts/trust-hooks.js"
   },
   "files": [

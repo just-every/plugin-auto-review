@@ -3,7 +3,7 @@
 const path = require("node:path");
 
 const { AppServerJsonlClient } = require("./app-server-client");
-const { resolveCodexHome } = require("./agent-setup");
+const { resolveCodexHome } = require("./codex-home");
 
 const DEFAULT_PLUGIN_ID = "auto-review@just-every";
 
