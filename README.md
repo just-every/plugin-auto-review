@@ -28,7 +28,7 @@ Clean reviews finish silently. Real findings are returned as normal Stop feedbac
 
 - `hooks/hooks.json` defines `UserPromptSubmit` and `Stop`.
 - Hook state is stored under `${PLUGIN_DATA}`.
-- Review workers use schema-constrained output, `gpt-5.5`, medium reasoning, and default service tier.
+- The review worker uses schema-constrained output, `gpt-5.5`, medium reasoning, and default service tier.
 - Review infrastructure failures write diagnostics to stderr and fail open.
 
 ## Development

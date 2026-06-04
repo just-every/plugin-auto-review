@@ -4,7 +4,7 @@ const assert = require("node:assert");
 const test = require("node:test");
 
 const { REVIEW_MODEL, REVIEW_REASONING, validateReviewModel } = require("../scripts/lib/codex-worker");
-const { REVIEW_LANES, buildReviewPrompt } = require("../scripts/lib/review-prompt");
+const { buildReviewPrompt } = require("../scripts/lib/review-prompt");
 
 test("review worker uses valid model slug with separate medium reasoning", () => {
   assert.strictEqual(REVIEW_MODEL, "gpt-5.5");
@@ -15,7 +15,6 @@ test("review worker uses valid model slug with separate medium reasoning", () =>
 
 test("review prompt asks only for meaningful regressions", () => {
   const prompt = buildReviewPrompt({
-    lane: REVIEW_LANES[1],
     snapshotDir: "/tmp/snapshot-final",
     changedPaths: ["src/app.js"],
     diff: "diff --git a/src/app.js b/src/app.js\n"
@@ -28,6 +27,4 @@ test("review prompt asks only for meaningful regressions", () => {
   assert.match(prompt, /important enough to block the turn/);
   assert.match(prompt, /Do not report missing tests/);
   assert.match(prompt, /When in doubt, return no findings/);
-  assert.match(REVIEW_LANES[1].lens, /concrete runtime or contract failures/);
-  assert.ok(!REVIEW_LANES[1].lens.includes("missing tests"));
 });

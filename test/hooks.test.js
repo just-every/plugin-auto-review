@@ -254,13 +254,13 @@ test("Stop advances the baseline after runner failures", () => {
   prepareEditedTurn(repo, pluginData);
 
   const failed = runStop(repo, pluginData, {
-    AUTO_REVIEW_LANE_TIMEOUT_MS: "not-a-number",
+    AUTO_REVIEW_TIMEOUT_MS: "not-a-number",
     MOCK_CODEX_ARGV_LOG: argvLog
   });
 
   assert.strictEqual(failed.status, 0);
   assert.deepStrictEqual(failed.json, { continue: true });
-  assert.match(failed.stderr, /AUTO_REVIEW_LANE_TIMEOUT_MS/);
+  assert.match(failed.stderr, /AUTO_REVIEW_TIMEOUT_MS/);
   assert.strictEqual(fs.existsSync(argvLog), false);
   assert.strictEqual(findFiles(pluginData, "result.json").length, 0);
 
@@ -301,7 +301,7 @@ test("Stop allows hung review worker timeouts with a controlled diagnostic", () 
   prepareEditedTurn(repo, pluginData);
 
   const result = runStop(repo, pluginData, {
-    AUTO_REVIEW_LANE_TIMEOUT_MS: "25",
+    AUTO_REVIEW_TIMEOUT_MS: "25",
     MOCK_CODEX_HANG: "1"
   });
 
@@ -353,7 +353,7 @@ test("Stop reviews tracked file deletions", () => {
   }
 });
 
-test("Stop starts review workers with bounded codex resource args", () => {
+test("Stop starts one review worker with bounded codex resource args", () => {
   const repo = createRepo();
   const pluginData = tempDir("auto-review-data-");
   const argvLog = path.join(pluginData, "codex-argv.jsonl");
@@ -368,9 +368,9 @@ test("Stop starts review workers with bounded codex resource args", () => {
   });
 
   assert.strictEqual(result.status, 0, result.stderr);
-  const argsByLane = fs.readFileSync(argvLog, "utf8").trim().split(/\n/).filter(Boolean).map((line) => JSON.parse(line));
-  assert.ok(argsByLane.length > 0);
-  for (const args of argsByLane) {
+  const argsByRun = fs.readFileSync(argvLog, "utf8").trim().split(/\n/).filter(Boolean).map((line) => JSON.parse(line));
+  assert.strictEqual(argsByRun.length, 1);
+  for (const args of argsByRun) {
     const workerDir = argValue(args, "--cd");
     const schemaPath = argValue(args, "--output-schema");
     const lastMessagePath = argValue(args, "--output-last-message");
@@ -382,7 +382,7 @@ test("Stop starts review workers with bounded codex resource args", () => {
     assert.ok(args.includes("--ignore-user-config"));
     assert.ok(args.includes("--ignore-rules"));
     assert.ok(args.includes("--skip-git-repo-check"));
-    assert.ok(workerDir.includes(`${path.sep}review-job${path.sep}lanes${path.sep}`));
+    assert.ok(workerDir.endsWith(`${path.sep}review-job${path.sep}reviewer`));
     assert.ok(isInsidePath(schemaPath, workerDir));
     assert.ok(isInsidePath(lastMessagePath, workerDir));
     assert.ok(!workerDir.includes(`${path.sep}snapshots${path.sep}final`));
@@ -399,12 +399,12 @@ test("Stop starts review workers with bounded codex resource args", () => {
     assert.match(prompt, /current working directory is review infrastructure/);
   }
   const envs = fs.readFileSync(envLog, "utf8").trim().split(/\n/).filter(Boolean).map((line) => JSON.parse(line));
-  assert.strictEqual(envs.length, argsByLane.length);
+  assert.strictEqual(envs.length, argsByRun.length);
   for (const [index, env] of envs.entries()) {
     assert.strictEqual(env.AUTO_REVIEW_CHILD, "1");
-    assert.strictEqual(env.AUTO_REVIEW_CHILD_CWD, argValue(argsByLane[index], "--cd"));
+    assert.strictEqual(env.AUTO_REVIEW_CHILD_CWD, argValue(argsByRun[index], "--cd"));
     assert.ok(env.AUTO_REVIEW_SNAPSHOT_DIR.includes(`${path.sep}snapshots${path.sep}final`));
-    assert.ok(!isInsidePath(argValue(argsByLane[index], "--cd"), env.AUTO_REVIEW_SNAPSHOT_DIR));
+    assert.ok(!isInsidePath(argValue(argsByRun[index], "--cd"), env.AUTO_REVIEW_SNAPSHOT_DIR));
   }
 });
 

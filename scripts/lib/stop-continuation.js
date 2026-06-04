@@ -3,7 +3,7 @@
 function formatReviewFailure(merged) {
   const lines = ["Auto Code Review failed before it could sign off on this turn."];
   for (const failure of merged.failures.slice(0, 4)) {
-    lines.push(`- ${failure.lane}: ${failure.error}`);
+    lines.push(`- ${failure.reviewer || failure.stage || "review"}: ${failure.error}`);
     const stderr = String(failure.stderr || "").trim();
     if (stderr) lines.push(`  stderr: ${truncate(stderr, 500)}`);
   }

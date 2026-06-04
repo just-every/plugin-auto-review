@@ -1,9 +1,8 @@
 "use strict";
 
-function buildReviewPrompt({ lane, snapshotDir, changedPaths, diff }) {
+function buildReviewPrompt({ snapshotDir, changedPaths, diff }) {
   return [
     "You are a Codex Auto Code Review worker.",
-    `Review lens: ${lane.lens}`,
     "",
     "Review only the provided baseline-to-final diff and the files named in the changed path list.",
     snapshotDir ? `Repository snapshot root: ${snapshotDir}` : null,
@@ -26,12 +25,6 @@ function buildReviewPrompt({ lane, snapshotDir, changedPaths, diff }) {
   ].filter((line) => line !== null).join("\n");
 }
 
-const REVIEW_LANES = [
-  { id: "correctness", lens: "correctness and behavioral regressions" },
-  { id: "edge-cases", lens: "edge cases that cause concrete runtime or contract failures" }
-];
-
 module.exports = {
-  REVIEW_LANES,
   buildReviewPrompt
 };

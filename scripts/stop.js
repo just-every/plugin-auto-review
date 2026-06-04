@@ -7,13 +7,12 @@ const {
   REVIEW_MODEL,
   REVIEW_REASONING,
   REVIEW_SERVICE_TIER,
-  runReviewLanes
+  runReview
 } = require("./lib/codex-worker");
 const { isChildSession, readHookInput } = require("./lib/hook-input");
 const { writeContinue, writeStopBlock } = require("./lib/hook-output");
 const { materializeSnapshot } = require("./lib/snapshot");
 const { computeDiffScope } = require("./lib/diff-scope");
-const { mergeReviewResults } = require("./lib/result-merge");
 const { formatFindings, formatReviewFailure } = require("./lib/stop-continuation");
 const { readJsonIfExists, turnPaths, writeJsonAtomic } = require("./lib/state-store");
 
@@ -63,9 +62,9 @@ async function main() {
     return;
   }
 
-  let laneResults;
+  let review;
   try {
-    laneResults = await runReviewLanes({
+    review = await runReview({
       snapshotDir: paths.finalSnapshotDir,
       jobDir: paths.jobDir,
       changedPaths: scope.changedPaths,
@@ -82,16 +81,15 @@ async function main() {
     return;
   }
 
-  const merged = mergeReviewResults(laneResults);
   promoteFinalToBaseline(paths, input, finalSnapshot);
 
-  if (merged.status === "failed") {
-    writeReviewFailureDiagnostic(merged);
+  if (review.status === "failed") {
+    writeReviewFailureDiagnostic(review);
     writeContinue();
     return;
   }
-  if (merged.status === "findings") {
-    writeStopBlock(formatFindings(merged.findings));
+  if (review.status === "findings") {
+    writeStopBlock(formatFindings(review.findings));
     return;
   }
   writeContinue();
@@ -104,7 +102,7 @@ function failedResult(stage, error, extra = {}) {
     error,
     failures: [
       {
-        lane: stage,
+        stage,
         error
       }
     ],
@@ -153,7 +151,7 @@ function normalizeFailureResult(result) {
   return {
     failures: [
       {
-        lane: result.stage || "review",
+        stage: result.stage || "review",
         error: result.error || "unknown failure"
       }
     ]
