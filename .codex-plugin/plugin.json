@@ -1,6 +1,6 @@
 {
   "name": "auto-review",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Auto Code Review reviews Codex edits at turn stop using plugin hooks.",
   "skills": "./skills/",
   "author": {
