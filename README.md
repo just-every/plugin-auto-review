@@ -64,15 +64,15 @@ npx -y @just-every/plugin-auto-review trust-hooks --plugin-id auto-review@local
 
 ## How It Works
 
-Auto Code Review captures a lightweight baseline at the start of a turn, notices when Codex edits files, and creates a review checkpoint when the turn tries to stop. A visible `Auto Code Review` subagent reviews the changed code with bounded reviewer subprocesses and schema-validated output.
+Auto Code Review captures a lightweight baseline at the start of a turn, notices when Codex edits files, and creates a review checkpoint when the turn tries to stop. A visible `Auto Code Review` subagent loads that checkpoint, reviews the changed code itself, reports findings in the parent thread, and records a small reviewed receipt.
 
-Clean reviews let the next Stop finish. Findings and reviewer failures block completion with a visible diagnostic so the main agent can fix the issue immediately.
+Clean receipts let the next Stop finish. Finding receipts keep completion blocked with a short pointer back to the Auto Code Review subagent result, so the hook enforces review without replaying the review details itself.
 
 - `hooks/hooks.json` defines `UserPromptSubmit`, `PostToolUse` for `apply_patch`, and `Stop`.
 - Hook state is stored under `${PLUGIN_DATA}`.
 - Stop checkpoints are stored under `${PLUGIN_DATA}/checkpoints`.
 - The Auto Code Review subagent reviews the latest pending checkpoint for the current repository.
-- Reviewer subprocesses run with `AUTO_REVIEW_CHILD=1`; hook scripts skip child sessions to avoid recursion.
+- The checkpoint helper only prints diff context and records reviewed receipts; it does not run a review model.
 
 ## Development
 

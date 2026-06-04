@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "Auto Code Review",
     "shortDescription": "Review edited Codex turns automatically",
-    "longDescription": "Auto Code Review uses Codex hooks to capture a turn baseline, mark successful apply_patch edits, and ask a visible Auto Code Review subagent to run a strict schema-validated checkpoint review before the turn completes.",
+    "longDescription": "Auto Code Review uses Codex hooks to capture a turn baseline, mark successful apply_patch edits, and ask a visible Auto Code Review subagent to review the checkpoint before the turn completes.",
     "developerName": "Just Every",
     "category": "Developer Tools",
     "capabilities": [

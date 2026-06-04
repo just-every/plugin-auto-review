@@ -3,8 +3,8 @@
 
 const {
   autoReviewAgentInstalled,
-  autoReviewCommand,
   codexHomeFromPluginData,
+  checkpointCommand,
   installAutoReviewAgent,
   installedPluginRoot,
   resolveCodexHome
@@ -15,8 +15,6 @@ const { writeContinue, writeStopBlock, writeStopMessage } = require("./lib/hook-
 const { readEditMarkers } = require("./lib/edit-markers");
 const { materializeSnapshot } = require("./lib/snapshot");
 const { computeDiffScope } = require("./lib/diff-scope");
-const { REVIEW_MODEL, REVIEW_REASONING, REVIEW_SERVICE_TIER } = require("./lib/codex-worker");
-const { formatFindings, formatReviewFailure } = require("./lib/stop-continuation");
 const { hashText, readJsonIfExists, turnPaths, writeJsonAtomic } = require("./lib/state-store");
 
 async function main() {
@@ -35,14 +33,14 @@ async function main() {
       writeContinue();
       return;
     }
-    writeJsonAtomic(paths.resultJson, failedResult("baseline", "edit markers existed but no captured baseline snapshot", markers));
+    writeJsonAtomic(paths.receiptJson, failedReceipt("baseline", "edit markers existed but no captured baseline snapshot", markers));
     writeStopBlock("Auto Code Review could not run because this turn has edit markers but no captured baseline snapshot.");
     return;
   }
 
   const finalSnapshot = materializeSnapshot(input.cwd, paths.finalSnapshotDir);
   if (!finalSnapshot) {
-    writeJsonAtomic(paths.resultJson, failedResult("snapshot", "working directory is no longer a git worktree", markers));
+    writeJsonAtomic(paths.receiptJson, failedReceipt("snapshot", "working directory is no longer a git worktree", markers));
     writeStopBlock("Auto Code Review could not run because the working directory is no longer a git worktree.");
     return;
   }
@@ -57,7 +55,7 @@ async function main() {
       finalSnapshot
     );
   } catch (error) {
-    writeJsonAtomic(paths.resultJson, failedResult("scope", error.message, markers));
+    writeJsonAtomic(paths.receiptJson, failedReceipt("scope", error.message, markers));
     writeStopBlock(`Auto Code Review could not prepare the review scope: ${error.message}`);
     return;
   }
@@ -67,7 +65,7 @@ async function main() {
       writeContinue();
       return;
     }
-    writeJsonAtomic(paths.resultJson, {
+    writeJsonAtomic(paths.receiptJson, {
       status: "clean",
       reason: "baseline and final snapshots matched",
       markers,
@@ -94,9 +92,9 @@ async function main() {
     })
   );
 
-  const existing = readJsonIfExists(paths.resultJson);
-  if (existing && existing.snapshotKey === snapshotKey) {
-    replayExistingResult(existing, scope.changedPaths.length);
+  const receipt = readJsonIfExists(paths.receiptJson);
+  if (receipt && receipt.snapshotKey === snapshotKey) {
+    replayReceipt(receipt, scope.changedPaths.length);
     return;
   }
 
@@ -107,11 +105,8 @@ async function main() {
     turnId: input.turn_id,
     cwd: input.cwd,
     repoRoot: finalSnapshot.repoRoot,
-    model: REVIEW_MODEL,
-    reasoning: REVIEW_REASONING,
-    serviceTier: REVIEW_SERVICE_TIER,
     paths,
-    resultJson: paths.resultJson,
+    receiptJson: paths.receiptJson,
     scope,
     markers,
     snapshotKey,
@@ -121,7 +116,7 @@ async function main() {
   writeStopBlock(buildAgentInstruction(input, paths.root, checkpointId));
 }
 
-function failedResult(stage, error, markers) {
+function failedReceipt(stage, error, markers) {
   return {
     status: "failed",
     stage,
@@ -131,26 +126,14 @@ function failedResult(stage, error, markers) {
   };
 }
 
-function replayExistingResult(existing, changedPathCount) {
-  if (existing.status === "failed") {
-    if (Array.isArray(existing.failures)) {
-      writeStopBlock(formatReviewFailure(existing));
-    } else {
-      writeStopBlock(
-        formatReviewFailure({
-          failures: [
-            {
-              lane: existing.stage || "review",
-              error: existing.error || "unknown failure"
-            }
-          ]
-        })
-      );
-    }
+function replayReceipt(receipt, changedPathCount) {
+  if (receipt.status === "failed") {
+    writeStopBlock("Auto Code Review could not complete this checkpoint. Check the Auto Code Review subagent output, then try finishing again.");
     return;
   }
-  if (existing.status === "findings") {
-    writeStopBlock(formatFindings(existing.findings || []));
+  if (receipt.status === "findings") {
+    const count = Number.isInteger(receipt.findingCount) ? ` ${receipt.findingCount}` : "";
+    writeStopBlock(`Auto Code Review reported${count} issue${receipt.findingCount === 1 ? "" : "s"} for this checkpoint. Use the Auto Code Review subagent result, address the issues, then try finishing again.`);
     return;
   }
   writeStopMessage(`Auto Code Review checked ${changedPathCount} changed path${changedPathCount === 1 ? "" : "s"} and found no issues.`);
@@ -170,8 +153,10 @@ function buildAgentInstruction(input, pluginData, checkpointId) {
     if (setup.fallbackCommand) {
       lines.push(
         "",
-        "For this turn only, spawn a default subagent and ask that subagent to run this command:",
-        setup.fallbackCommand
+        "For this turn only, spawn a default subagent and ask that subagent to review this checkpoint itself.",
+        "Context command for that subagent:",
+        setup.fallbackCommand,
+        "After reporting its review result, the subagent must run one receipt command from the context output."
       );
     }
     return lines.join("\n");
@@ -242,7 +227,7 @@ function ensureAgentSetup(pluginData, reviewTarget = {}) {
 }
 
 function fallbackReviewCommand(options, reviewTarget) {
-  return `${autoReviewCommand({
+  return `${checkpointCommand({
     ...options,
     cwd: reviewTarget.cwd
   })} --checkpoint-id ${reviewTarget.checkpointId}`;

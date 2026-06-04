@@ -83,7 +83,7 @@ function autoReviewAgentContent(options = {}) {
     throw new Error("pluginRoot is required to write the Auto Code Review agent command");
   }
   return autoReviewAgentToml({
-    command: autoReviewCommand({
+    command: checkpointCommand({
       ...options,
       codexHome,
       pluginData,
@@ -136,15 +136,15 @@ function parsePluginId(pluginId) {
   return [pluginName, marketplaceName];
 }
 
-function autoReviewCommand(options = {}) {
+function checkpointCommand(options = {}) {
   const codexHome = resolveCodexHome(options);
   const pluginRoot = path.resolve(options.pluginRoot || path.join(__dirname, "..", ".."));
   const pluginData = path.resolve(options.pluginData || pluginDataDir(codexHome, options.pluginId));
   const cwd = options.cwd ? shellQuote(path.resolve(options.cwd)) : "\"$PWD\"";
   return [
     shellQuote(process.execPath),
-    shellQuote(path.join(pluginRoot, "scripts", "autoreview.js")),
-    "latest",
+    shellQuote(path.join(pluginRoot, "scripts", "checkpoint.js")),
+    "context",
     "--plugin-data",
     shellQuote(pluginData),
     "--cwd",
@@ -157,25 +157,26 @@ function shellQuote(value) {
 }
 
 function autoReviewAgentToml(options = {}) {
-  const command = options.command || autoReviewCommand({
+  const command = options.command || checkpointCommand({
     pluginData: pluginDataDir(resolveCodexHome())
   });
   return `name = "auto-review"
-description = "Visible Auto Code Review agent that inspects persisted review checkpoints and reports findings without editing repo files."
-model = "gpt-5.4-mini"
-model_reasoning_effort = "low"
+description = "Visible Auto Code Review agent that reviews persisted checkpoints and reports findings without editing repo files."
+model = "gpt-5.5"
+model_reasoning_effort = "medium"
 sandbox_mode = "workspace-write"
 nickname_candidates = ["Auto Code Review"]
 
 developer_instructions = """
 You are the Auto Code Review subagent for Codex.
 
-Your job is to review checkpoints produced by the Auto Code Review plugin and report
-the result clearly to the parent thread. Do not edit repository files, do not
-apply fixes, and do not start additional agents.
+Your job is to review checkpoints produced by the Auto Code Review plugin.
+You are the reviewer. Do not delegate review to another command, another model,
+or another agent. Do not edit repository files, do not apply fixes, and do not
+start additional agents.
 
-When the parent asks you to review a checkpoint, run this command from the
-repository root:
+When the parent asks you to review a checkpoint, run this command only to load
+the checkpoint context:
 
 ${command}
 
@@ -185,20 +186,26 @@ to the command.
 If the parent message includes \`Repository cwd: <path>\`, replace \`"$PWD"\`
 in the command with the quoted repository cwd path from the parent message.
 
-Run the command once for each checkpoint request. Report stdout verbatim, then
-add a one-sentence status summary only if the stdout is unclear. If the command
-fails, report stderr and the exit code.
+Review the changed paths and diff printed by that command. Report findings
+directly in your own response to the parent thread. Prioritize correctness,
+behavioral regressions, broken contracts, unsafe behavior, and missing edge-case
+handling. Do not report style-only issues.
+
+After you report the review result, run exactly one receipt command from the
+checkpoint context. The receipt records only whether this checkpoint was reviewed;
+it must not contain the review findings. If the context command fails, report
+stderr and the exit code to the parent thread.
 """
 `;
 }
 
 module.exports = {
   autoReviewAgentToml,
-  autoReviewCommand,
   autoReviewAgentContent,
   autoReviewAgentInstalled,
   autoReviewAgentPath,
   codexHomeFromPluginData,
+  checkpointCommand,
   installAutoReviewAgent,
   installedPluginRoot,
   pluginDataDir,

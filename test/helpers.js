@@ -6,7 +6,6 @@ const os = require("node:os");
 const path = require("node:path");
 
 const ROOT = path.resolve(__dirname, "..");
-const MOCK_CODEX = path.join(ROOT, "test", "fixtures", "mock-codex.js");
 
 function tempDir(name) {
   return fs.mkdtempSync(path.join(os.tmpdir(), name));
@@ -46,13 +45,11 @@ function hookInput(event, cwd, overrides = {}) {
 }
 
 function runHook(script, input, env = {}) {
-  fs.chmodSync(MOCK_CODEX, 0o755);
   const result = childProcess.spawnSync(process.execPath, [path.join(ROOT, "scripts", script)], {
     input: JSON.stringify(input),
     env: {
       ...process.env,
       PLUGIN_DATA: env.PLUGIN_DATA || tempDir("auto-review-data-"),
-      CODEX_CLI_PATH: MOCK_CODEX,
       ...env
     },
     encoding: "utf8"
@@ -87,7 +84,6 @@ function prepareEditedTurn(repo, pluginData, env = {}) {
 }
 
 module.exports = {
-  MOCK_CODEX,
   createRepo,
   hookInput,
   prepareEditedTurn,
