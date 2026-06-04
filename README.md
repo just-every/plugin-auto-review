@@ -1,8 +1,10 @@
-# Auto Code Review
+# Auto Code Review Plugin for Codex
 
-Auto Code Review is a Codex plugin that runs code review from hooks. It captures a turn baseline on `UserPromptSubmit`, records successful `apply_patch` edits on `PostToolUse`, and creates a review checkpoint on `Stop`.
+Auto Code Review gives Codex a peer programmer that reviews code as it is written. It runs a continuous, token-efficient review loop alongside the main agent, catches issues while the work is still fresh, and feeds clear findings back before the turn is allowed to finish.
 
-When a checkpoint is pending, the Stop hook asks Codex to spawn or steer a visible `Auto Code Review` subagent. The subagent runs `$autoreview latest`, which uses real `codex exec` subprocesses in parallel and validates every reviewer response against a strict JSON schema. Clean reviews let the next Stop finish; findings and reviewer failures block with a visible diagnostic.
+The goal is fast, useful feedback without making the main agent reread the whole repository or wait for a heavy review pass after the fact. Auto Code Review watches the code the agent actually changed, asks a dedicated reviewer to inspect that checkpoint, and only interrupts when there is something real to fix.
+
+Use it when you want AI coding sessions to feel more like pairing with a careful teammate: the main agent keeps building, while a focused reviewer checks the diff for bugs, regressions, missed edge cases, and unsafe assumptions.
 
 ## Install
 
@@ -58,7 +60,11 @@ npx -y @just-every/plugin-auto-review trust-hooks --plugin-id auto-review@local
 
 `codex --dangerously-bypass-hook-trust` can run enabled hooks without persisted trust for a single invocation, but it is not a persistent setup command.
 
-## Hooks
+## How It Works
+
+Auto Code Review captures a lightweight baseline at the start of a turn, notices when Codex edits files, and creates a review checkpoint when the turn tries to stop. A visible `Auto Code Review` subagent reviews the changed code with bounded reviewer subprocesses and schema-validated output.
+
+Clean reviews let the next Stop finish. Findings and reviewer failures block completion with a visible diagnostic so the main agent can fix the issue immediately.
 
 - `hooks/hooks.json` defines `UserPromptSubmit`, `PostToolUse` for `apply_patch`, and `Stop`.
 - Hook state is stored under `${PLUGIN_DATA}`.
