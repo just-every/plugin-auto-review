@@ -1,6 +1,6 @@
 {
   "name": "@just-every/plugin-auto-review",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Codex Auto Code Review plugin using hooks.",
   "license": "MIT",
   "homepage": "https://github.com/just-every/plugin-auto-review#readme",
