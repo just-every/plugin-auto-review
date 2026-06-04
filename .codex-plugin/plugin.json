@@ -2,7 +2,6 @@
   "name": "auto-review",
   "version": "0.1.4",
   "description": "Auto Code Review reviews Codex edits at turn stop using plugin hooks.",
-  "skills": "./skills/",
   "author": {
     "name": "Just Every",
     "url": "https://github.com/just-every"

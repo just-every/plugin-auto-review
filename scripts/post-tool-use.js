@@ -2,7 +2,7 @@
 "use strict";
 
 const { isChildSession, readHookInput, requireString } = require("./lib/hook-input");
-const { writeContinue, writePostToolAdditionalContext } = require("./lib/hook-output");
+const { writeContinue } = require("./lib/hook-output");
 const { writeEditMarker } = require("./lib/edit-markers");
 const { maybeGitWorktree } = require("./lib/git");
 const { turnPaths } = require("./lib/state-store");
@@ -25,8 +25,12 @@ function main() {
   }
 
   const paths = turnPaths(input);
-  writeEditMarker(paths, input);
-  writePostToolAdditionalContext("Auto Code Review marked this edited turn for a Stop checkpoint review.");
+  try {
+    writeEditMarker(paths, input);
+  } catch (error) {
+    process.stderr.write(`Auto Code Review could not record an edit marker: ${error.message}\n`);
+  }
+  writeContinue();
 }
 
 try {

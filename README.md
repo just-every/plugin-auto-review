@@ -71,7 +71,7 @@ Clean reviews let the next Stop finish. Findings and reviewer failures block com
 - `hooks/hooks.json` defines `UserPromptSubmit`, `PostToolUse` for `apply_patch`, and `Stop`.
 - Hook state is stored under `${PLUGIN_DATA}`.
 - Stop checkpoints are stored under `${PLUGIN_DATA}/checkpoints`.
-- `$autoreview latest` reviews the latest pending checkpoint for the current session and repository.
+- The Auto Code Review subagent reviews the latest pending checkpoint for the current repository.
 - Reviewer subprocesses run with `AUTO_REVIEW_CHILD=1`; hook scripts skip child sessions to avoid recursion.
 
 ## Development

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
-const { installAutoReviewAgent } = require("./lib/agent-setup");
+const { installAutoReviewAgent, installedPluginRoot, pluginDataDir } = require("./lib/agent-setup");
 const { DEFAULT_PLUGIN_ID, trustPluginHooks } = require("./lib/hooks-trust");
 const { installAutoReviewPlugin } = require("./lib/plugin-install");
 
@@ -66,8 +66,15 @@ async function setupAutoReview(options) {
     ? installAutoReviewPlugin(options)
     : [];
   const hooks = await trustPluginHooks(options);
+  const pluginRoot = installedPluginRoot(hooks.codexHome, options.pluginId, { attempts: 10, delayMs: 100 });
+  if (options.command === "setup" && !options.dryRun && !pluginRoot) {
+    throw new Error(`Could not find installed ${options.pluginId || DEFAULT_PLUGIN_ID} plugin cache under ${hooks.codexHome}`);
+  }
   const agent = installAutoReviewAgent({
     codexHome: hooks.codexHome,
+    pluginId: options.pluginId,
+    pluginRoot,
+    pluginData: pluginDataDir(hooks.codexHome, hooks.pluginId),
     dryRun: options.dryRun
   });
   return {

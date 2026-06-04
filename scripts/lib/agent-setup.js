@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const AGENT_FILE = "auto-review.toml";
+const DEFAULT_PLUGIN_ID = "auto-review@just-every";
 
 function resolveCodexHome(options = {}) {
   return path.resolve(expandHome(options.codexHome || process.env.CODEX_HOME || path.join(os.homedir(), ".codex")));
@@ -22,6 +23,20 @@ function autoReviewAgentPath(codexHome) {
   return path.join(codexHome, "agents", AGENT_FILE);
 }
 
+function codexHomeFromPluginData(pluginData) {
+  if (!pluginData) return null;
+  let current = path.resolve(pluginData);
+  while (current && current !== path.dirname(current)) {
+    const dataDir = path.dirname(current);
+    const pluginsDir = path.dirname(dataDir);
+    if (path.basename(dataDir) === "data" && path.basename(pluginsDir) === "plugins") {
+      return path.dirname(pluginsDir);
+    }
+    current = dataDir;
+  }
+  return null;
+}
+
 function autoReviewAgentInstalled(options = {}) {
   const codexHome = resolveCodexHome(options);
   const file = autoReviewAgentPath(codexHome);
@@ -37,7 +52,7 @@ function autoReviewAgentInstalled(options = {}) {
 function installAutoReviewAgent(options = {}) {
   const codexHome = resolveCodexHome(options);
   const file = autoReviewAgentPath(codexHome);
-  const content = autoReviewAgentToml();
+  const content = autoReviewAgentContent({ ...options, codexHome });
   let previous = null;
   try {
     previous = fs.readFileSync(file, "utf8");
@@ -60,7 +75,91 @@ function installAutoReviewAgent(options = {}) {
   };
 }
 
-function autoReviewAgentToml() {
+function autoReviewAgentContent(options = {}) {
+  const codexHome = resolveCodexHome(options);
+  const pluginData = options.pluginData || pluginDataDir(codexHome, options.pluginId);
+  const pluginRoot = options.pluginRoot || (options.dryRun ? "<installed-plugin-root>" : null);
+  if (!pluginRoot) {
+    throw new Error("pluginRoot is required to write the Auto Code Review agent command");
+  }
+  return autoReviewAgentToml({
+    command: autoReviewCommand({
+      ...options,
+      codexHome,
+      pluginData,
+      pluginRoot
+    })
+  });
+}
+
+function pluginDataDir(codexHome, pluginId = DEFAULT_PLUGIN_ID) {
+  return path.join(codexHome, "plugins", "data", pluginId.replace("@", "-").replace(/[^A-Za-z0-9._-]/g, "-"));
+}
+
+function installedPluginRoot(codexHome, pluginId = DEFAULT_PLUGIN_ID, options = {}) {
+  const attempts = options.attempts || 1;
+  const delayMs = options.delayMs || 100;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const found = findInstalledPluginRoot(codexHome, pluginId);
+    if (found || attempt === attempts - 1) return found;
+    sleep(delayMs);
+  }
+  return null;
+}
+
+function findInstalledPluginRoot(codexHome, pluginId = DEFAULT_PLUGIN_ID) {
+  const [pluginName, marketplaceName] = parsePluginId(pluginId);
+  if (!pluginName || !marketplaceName) return null;
+  const root = path.join(codexHome, "plugins", "cache", marketplaceName, pluginName);
+  let entries;
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => {
+        const dir = path.join(root, entry.name);
+        return { dir, mtimeMs: fs.statSync(dir).mtimeMs };
+      });
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+  entries.sort((a, b) => b.mtimeMs - a.mtimeMs || b.dir.localeCompare(a.dir));
+  return entries[0]?.dir || null;
+}
+
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function parsePluginId(pluginId) {
+  const [pluginName, marketplaceName] = String(pluginId || "").split("@");
+  return [pluginName, marketplaceName];
+}
+
+function autoReviewCommand(options = {}) {
+  const codexHome = resolveCodexHome(options);
+  const pluginRoot = path.resolve(options.pluginRoot || path.join(__dirname, "..", ".."));
+  const pluginData = path.resolve(options.pluginData || pluginDataDir(codexHome, options.pluginId));
+  const cwd = options.cwd ? shellQuote(path.resolve(options.cwd)) : "\"$PWD\"";
+  return [
+    shellQuote(process.execPath),
+    shellQuote(path.join(pluginRoot, "scripts", "autoreview.js")),
+    "latest",
+    "--plugin-data",
+    shellQuote(pluginData),
+    "--cwd",
+    cwd
+  ].join(" ");
+}
+
+function shellQuote(value) {
+  return `"${String(value).replace(/(["\\$`])/g, "\\$1")}"`;
+}
+
+function autoReviewAgentToml(options = {}) {
+  const command = options.command || autoReviewCommand({
+    pluginData: pluginDataDir(resolveCodexHome())
+  });
   return `name = "auto-review"
 description = "Visible Auto Code Review agent that inspects persisted review checkpoints and reports findings without editing repo files."
 model = "gpt-5.4-mini"
@@ -75,18 +174,33 @@ Your job is to review checkpoints produced by the Auto Code Review plugin and re
 the result clearly to the parent thread. Do not edit repository files, do not
 apply fixes, and do not start additional agents.
 
-When the parent asks you to run "$autoreview latest", use the autoreview skill
-when it is available. If the parent includes an exact shell command, run that
-command. Report the command stdout verbatim, then add a one-sentence status
-summary only if the stdout is unclear.
+When the parent asks you to review a checkpoint, run this command from the
+repository root:
+
+${command}
+
+If the parent message includes a checkpoint id, append \`--checkpoint-id <id>\`
+to the command.
+
+If the parent message includes \`Repository cwd: <path>\`, replace \`"$PWD"\`
+in the command with the quoted repository cwd path from the parent message.
+
+Run the command once for each checkpoint request. Report stdout verbatim, then
+add a one-sentence status summary only if the stdout is unclear. If the command
+fails, report stderr and the exit code.
 """
 `;
 }
 
 module.exports = {
+  autoReviewAgentToml,
+  autoReviewCommand,
+  autoReviewAgentContent,
   autoReviewAgentInstalled,
   autoReviewAgentPath,
-  autoReviewAgentToml,
+  codexHomeFromPluginData,
   installAutoReviewAgent,
+  installedPluginRoot,
+  pluginDataDir,
   resolveCodexHome
 };

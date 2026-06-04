@@ -14,24 +14,28 @@ function main() {
   }
 
   const paths = turnPaths(input);
-  if (readJsonIfExists(paths.baselineJson)) {
-    writeContinue();
-    return;
-  }
+  try {
+    if (readJsonIfExists(paths.baselineJson)) {
+      writeContinue();
+      return;
+    }
 
-  const baseline = materializeSnapshot(input.cwd, paths.baselineSnapshotDir);
-  if (!baseline) {
-    writeContinue();
-    return;
-  }
+    const baseline = materializeSnapshot(input.cwd, paths.baselineSnapshotDir);
+    if (!baseline) {
+      writeContinue();
+      return;
+    }
 
-  writeJsonAtomic(paths.baselineJson, {
-    ...baseline,
-    session_id: input.session_id,
-    turn_id: input.turn_id,
-    model: input.model,
-    permission_mode: input.permission_mode
-  });
+    writeJsonAtomic(paths.baselineJson, {
+      ...baseline,
+      session_id: input.session_id,
+      turn_id: input.turn_id,
+      model: input.model,
+      permission_mode: input.permission_mode
+    });
+  } catch (error) {
+    process.stderr.write(`Auto Code Review could not capture a baseline snapshot: ${error.message}\n`);
+  }
   writeContinue();
 }
 

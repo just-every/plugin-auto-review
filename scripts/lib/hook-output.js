@@ -8,15 +8,6 @@ function writeContinue(output = {}) {
   writeHookOutput({ continue: true, ...output });
 }
 
-function writePostToolAdditionalContext(additionalContext) {
-  writeContinue({
-    hookSpecificOutput: {
-      hookEventName: "PostToolUse",
-      additionalContext
-    }
-  });
-}
-
 function writeStopBlock(reason) {
   writeHookOutput({
     continue: true,
@@ -32,7 +23,6 @@ function writeStopMessage(systemMessage) {
 module.exports = {
   writeContinue,
   writeHookOutput,
-  writePostToolAdditionalContext,
   writeStopBlock,
   writeStopMessage
 };

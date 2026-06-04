@@ -6,6 +6,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 
+const { installAutoReviewAgent } = require("../scripts/lib/agent-setup");
+const { checkpointIdForSnapshot } = require("../scripts/lib/checkpoints");
 const { MOCK_CODEX, createRepo, hookInput, prepareEditedTurn, runHook, tempDir } = require("./helpers");
 
 const ROOT = path.resolve(__dirname, "..");
@@ -24,6 +26,30 @@ test("UserPromptSubmit captures a baseline snapshot", () => {
   assert.strictEqual(baselineFiles.length, 1);
   const baseline = JSON.parse(fs.readFileSync(baselineFiles[0], "utf8"));
   assert.ok(baseline.files.some((file) => file.path === "src/app.js"));
+});
+
+test("UserPromptSubmit fails open when baseline persistence fails", () => {
+  const repo = createRepo();
+  const pluginDataFile = path.join(tempDir("auto-review-data-file-"), "data");
+  fs.writeFileSync(pluginDataFile, "not a directory\n", "utf8");
+
+  const result = runHook("user-prompt-submit.js", hookInput("UserPromptSubmit", repo), {
+    PLUGIN_DATA: pluginDataFile
+  });
+
+  assert.strictEqual(result.status, 0, result.stderr);
+  assert.deepStrictEqual(result.json, { continue: true });
+});
+
+test("UserPromptSubmit keeps configuration failures visible", () => {
+  const repo = createRepo();
+
+  const result = runHook("user-prompt-submit.js", hookInput("UserPromptSubmit", repo), {
+    PLUGIN_DATA: ""
+  });
+
+  assert.strictEqual(result.status, 1);
+  assert.match(result.stderr, /PLUGIN_DATA is required/);
 });
 
 test("PostToolUse records only apply_patch edit markers", () => {
@@ -48,14 +74,59 @@ test("PostToolUse records only apply_patch edit markers", () => {
     hookInput("PostToolUse", repo, {
       tool_name: "apply_patch",
       tool_use_id: "tool-patch",
-      tool_input: {},
-      tool_response: {}
+      tool_input: { arguments: { noisy: "payload" } },
+      tool_response: { output: "Success" }
     }),
     { PLUGIN_DATA: pluginData }
   );
   assert.strictEqual(marked.status, 0, marked.stderr);
-  assert.match(marked.json.hookSpecificOutput.additionalContext, /Stop checkpoint review/);
-  assert.strictEqual(findFiles(pluginData, ".json").filter((file) => file.includes("markers")).length, 1);
+  assert.deepStrictEqual(marked.json, { continue: true });
+  const markerFiles = findFiles(pluginData, ".json").filter((file) => file.includes("markers"));
+  assert.strictEqual(markerFiles.length, 1);
+  const marker = JSON.parse(fs.readFileSync(markerFiles[0], "utf8"));
+  assert.strictEqual(marker.tool_name, "apply_patch");
+  assert.strictEqual(marker.tool_use_id, "tool-patch");
+  assert.ok(!Object.hasOwn(marker, "tool_input"));
+  assert.ok(!Object.hasOwn(marker, "tool_response"));
+});
+
+test("PostToolUse fails open when marker persistence fails", () => {
+  const repo = createRepo();
+  const pluginDataFile = path.join(tempDir("auto-review-data-file-"), "data");
+  fs.writeFileSync(pluginDataFile, "not a directory\n", "utf8");
+
+  const result = runHook(
+    "post-tool-use.js",
+    hookInput("PostToolUse", repo, {
+      tool_name: "apply_patch",
+      tool_use_id: "tool-patch",
+      tool_input: {
+        arguments: {
+          ["x".repeat(800)]: "oversized property names should never break the parent turn"
+        }
+      },
+      tool_response: { output: "Success" }
+    }),
+    { PLUGIN_DATA: pluginDataFile }
+  );
+
+  assert.strictEqual(result.status, 0, result.stderr);
+  assert.deepStrictEqual(result.json, { continue: true });
+});
+
+test("PostToolUse keeps hook contract failures visible", () => {
+  const repo = createRepo();
+
+  const result = runHook(
+    "post-tool-use.js",
+    hookInput("UserPromptSubmit", repo, {
+      tool_name: "apply_patch",
+      tool_use_id: "tool-patch"
+    })
+  );
+
+  assert.strictEqual(result.status, 1);
+  assert.match(result.stderr, /expected PostToolUse hook input/);
 });
 
 test("Stop skips turns that have no edit markers", () => {
@@ -70,10 +141,29 @@ test("Stop skips turns that have no edit markers", () => {
   assert.deepStrictEqual(result.json, { continue: true });
 });
 
+test("Stop reviews changed snapshots even when the edit marker is missing", () => {
+  const repo = createRepo();
+  const pluginData = tempDir("auto-review-data-");
+
+  const user = runHook("user-prompt-submit.js", hookInput("UserPromptSubmit", repo), {
+    PLUGIN_DATA: pluginData
+  });
+  assert.strictEqual(user.status, 0, user.stderr);
+
+  fs.writeFileSync(path.join(repo, "src", "app.js"), "module.exports = 2;\n", "utf8");
+  const result = runStop(repo, pluginData);
+
+  assert.strictEqual(result.status, 0, result.stderr);
+  assert.strictEqual(result.json.decision, "block");
+  assert.match(result.json.reason, /Auto Code Review checkpoint/);
+});
+
 test("Stop writes checkpoint and blocks with Auto Code Review agent instructions", () => {
   const repo = createRepo();
   const pluginData = tempDir("auto-review-data-");
   const codexHome = tempDir("auto-review-codex-home-");
+  const pluginRoot = createPluginCache(codexHome);
+  installAutoReviewAgent({ codexHome, pluginData, pluginRoot });
   prepareEditedTurn(repo, pluginData);
 
   const result = runStop(repo, pluginData, { CODEX_HOME: codexHome });
@@ -81,11 +171,65 @@ test("Stop writes checkpoint and blocks with Auto Code Review agent instructions
   assert.strictEqual(result.status, 0, result.stderr);
   assert.strictEqual(result.json.decision, "block");
   assert.match(result.json.reason, /Auto Code Review checkpoint/);
-  assert.match(result.json.reason, /agent type `auto-review`|default gpt-5\.4-mini/);
-  assert.match(result.json.reason, /\$autoreview latest/);
-  assert.match(result.json.reason, /scripts\/autoreview\.js/);
+  assert.match(result.json.reason, /Ask the `auto-review` subagent/);
+  assert.match(result.json.reason, /Review Auto Code Review checkpoint [a-f0-9]{16}/);
+  assert.match(result.json.reason, /Do not run the code review in this main thread/);
+  assert.doesNotMatch(result.json.reason, /\$autoreview/);
+  assert.doesNotMatch(result.json.reason, /scripts\/autoreview\.js/);
   assert.strictEqual(findFiles(pluginData, "request.json").length, 1);
   assert.ok(fs.existsSync(path.join(codexHome, "agents", "auto-review.toml")));
+});
+
+test("checkpoint ids are lowercase hex", () => {
+  const checkpointId = checkpointIdForSnapshot("snapshot-key", {
+    session_id: "session-1",
+    turn_id: "turn-1"
+  });
+  assert.match(checkpointId, /^[a-f0-9]{16}$/);
+});
+
+test("Stop installs a missing Auto Code Review agent and asks for reload", () => {
+  const repo = createRepo();
+  const pluginData = tempDir("auto-review-data-");
+  const codexHome = tempDir("auto-review-codex-home-");
+  createPluginCache(codexHome);
+  prepareEditedTurn(repo, pluginData);
+
+  const result = runStop(repo, pluginData, { CODEX_HOME: codexHome });
+
+  assert.strictEqual(result.status, 0, result.stderr);
+  assert.strictEqual(result.json.decision, "block");
+  assert.match(result.json.reason, /Installed the Auto Code Review subagent/);
+  assert.match(result.json.reason, /Reopen Codex/);
+  assert.doesNotMatch(result.json.reason, /Ask the `auto-review` subagent/);
+  assert.doesNotMatch(result.json.reason, /npx -y @just-every\/plugin-auto-review setup/);
+  assert.doesNotMatch(result.json.reason, /\$autoreview/);
+  assert.match(result.json.reason, /spawn a default subagent/);
+  assert.match(result.json.reason, /scripts\/autoreview\.js/);
+  assert.match(result.json.reason, /--checkpoint-id [a-f0-9]{16}/);
+  assert.ok(fs.existsSync(path.join(codexHome, "agents", "auto-review.toml")));
+});
+
+test("Stop asks for reload when an installed agent config changes", () => {
+  const repo = createRepo();
+  const pluginData = tempDir("auto-review-data-");
+  const codexHome = tempDir("auto-review-codex-home-");
+  createPluginCache(codexHome);
+  fs.mkdirSync(path.join(codexHome, "agents"), { recursive: true });
+  fs.writeFileSync(path.join(codexHome, "agents", "auto-review.toml"), 'name = "auto-review"\nold = true\n', "utf8");
+  prepareEditedTurn(repo, pluginData);
+
+  const result = runStop(repo, pluginData, { CODEX_HOME: codexHome });
+
+  assert.strictEqual(result.status, 0, result.stderr);
+  assert.strictEqual(result.json.decision, "block");
+  assert.match(result.json.reason, /updated its subagent configuration/);
+  assert.match(result.json.reason, /Reopen Codex/);
+  assert.doesNotMatch(result.json.reason, /Ask the `auto-review` subagent/);
+  assert.doesNotMatch(result.json.reason, /Review Auto Code Review checkpoint [a-f0-9]{16}/);
+  assert.match(result.json.reason, /spawn a default subagent/);
+  assert.match(result.json.reason, /scripts\/autoreview\.js/);
+  assert.match(result.json.reason, /--checkpoint-id [a-f0-9]{16}/);
 });
 
 test("autoreview latest completes a clean checkpoint and lets Stop finish", () => {
@@ -183,7 +327,281 @@ test("Stop ignores stale clean results after the snapshot changes", () => {
   assert.match(changedReview.stdout, /Broken behavior/);
 });
 
-test("Stop blocks with fallback instructions when agent setup fails", () => {
+test("autoreview latest ignores completed checkpoints when another session is pending", () => {
+  const repo = createRepo();
+  const pluginData = tempDir("auto-review-data-");
+
+  markEditedTurn(repo, pluginData, {
+    sessionId: "session-old",
+    turnId: "turn-old",
+    content: "module.exports = 2;\n",
+    toolUseId: "tool-old"
+  });
+  const oldStop = runStop(repo, pluginData, {}, { session_id: "session-old", turn_id: "turn-old" });
+  assert.strictEqual(oldStop.json.decision, "block");
+
+  markEditedTurn(repo, pluginData, {
+    sessionId: "session-new",
+    turnId: "turn-new",
+    content: "module.exports = 3;\n",
+    toolUseId: "tool-new"
+  });
+  const newStop = runStop(repo, pluginData, {}, { session_id: "session-new", turn_id: "turn-new" });
+  assert.strictEqual(newStop.json.decision, "block");
+
+  const newReview = runAutoreview(repo, pluginData);
+  assert.strictEqual(newReview.status, 0, newReview.stderr);
+  assert.match(newReview.stdout, /found no issues/);
+
+  const oldReview = runAutoreview(repo, pluginData, { MOCK_CODEX_FINDING: "1" });
+  assert.strictEqual(oldReview.status, 0, oldReview.stderr);
+  assert.match(oldReview.stdout, /Broken behavior/);
+});
+
+test("autoreview checkpoint id reviews the requested pending checkpoint", () => {
+  const repo = createRepo();
+  const pluginData = tempDir("auto-review-data-");
+
+  markEditedTurn(repo, pluginData, {
+    sessionId: "session-first",
+    turnId: "turn-first",
+    content: "module.exports = 2;\n",
+    toolUseId: "tool-first"
+  });
+  const firstStop = runStop(repo, pluginData, {}, { session_id: "session-first", turn_id: "turn-first" });
+  assert.strictEqual(firstStop.json.decision, "block");
+  const firstCheckpointId = checkpointIdFromReason(firstStop.json.reason);
+
+  markEditedTurn(repo, pluginData, {
+    sessionId: "session-second",
+    turnId: "turn-second",
+    content: "module.exports = 3;\n",
+    toolUseId: "tool-second"
+  });
+  const secondStop = runStop(repo, pluginData, {}, { session_id: "session-second", turn_id: "turn-second" });
+  assert.strictEqual(secondStop.json.decision, "block");
+
+  const firstReview = runAutoreview(repo, pluginData, { MOCK_CODEX_FINDING: "1" }, ["--checkpoint-id", firstCheckpointId]);
+  assert.strictEqual(firstReview.status, 0, firstReview.stderr);
+  assert.match(firstReview.stdout, /Broken behavior/);
+
+  const secondReview = runAutoreview(repo, pluginData);
+  assert.strictEqual(secondReview.status, 0, secondReview.stderr);
+  assert.match(secondReview.stdout, /found no issues/);
+});
+
+test("autoreview checkpoint id reviews non-latest checkpoint in the same session", () => {
+  const repo = createRepo();
+  const pluginData = tempDir("auto-review-data-");
+
+  markEditedTurn(repo, pluginData, {
+    sessionId: "session-same",
+    turnId: "turn-a",
+    content: "module.exports = 2;\n",
+    toolUseId: "tool-a"
+  });
+  const firstStop = runStop(repo, pluginData, {}, { session_id: "session-same", turn_id: "turn-a" });
+  assert.strictEqual(firstStop.json.decision, "block");
+  const firstCheckpointId = checkpointIdFromReason(firstStop.json.reason);
+
+  fs.writeFileSync(path.join(repo, "src", "app.js"), "module.exports = 1;\n", "utf8");
+  markEditedTurn(repo, pluginData, {
+    sessionId: "session-same",
+    turnId: "turn-b",
+    content: "module.exports = 3;\n",
+    toolUseId: "tool-b"
+  });
+  const secondStop = runStop(repo, pluginData, {}, { session_id: "session-same", turn_id: "turn-b" });
+  assert.strictEqual(secondStop.json.decision, "block");
+  const secondCheckpointId = checkpointIdFromReason(secondStop.json.reason);
+  assert.notStrictEqual(firstCheckpointId, secondCheckpointId);
+
+  const firstReview = runAutoreview(repo, pluginData, { MOCK_CODEX_FINDING: "1" }, ["--checkpoint-id", firstCheckpointId]);
+  assert.strictEqual(firstReview.status, 0, firstReview.stderr);
+  assert.match(firstReview.stdout, /Broken behavior/);
+
+  const secondReview = runAutoreview(repo, pluginData, {}, ["--checkpoint-id", secondCheckpointId]);
+  assert.strictEqual(secondReview.status, 0, secondReview.stderr);
+  assert.match(secondReview.stdout, /found no issues/);
+});
+
+test("autoreview checkpoint id rejects completed checkpoints", () => {
+  const repo = createRepo();
+  const pluginData = tempDir("auto-review-data-");
+
+  markEditedTurn(repo, pluginData, {
+    sessionId: "session-complete",
+    turnId: "turn-complete",
+    content: "module.exports = 2;\n",
+    toolUseId: "tool-complete"
+  });
+  const stop = runStop(repo, pluginData, {}, { session_id: "session-complete", turn_id: "turn-complete" });
+  assert.strictEqual(stop.json.decision, "block");
+  const checkpointId = checkpointIdFromReason(stop.json.reason);
+
+  const firstReview = runAutoreview(repo, pluginData, {}, ["--checkpoint-id", checkpointId]);
+  assert.strictEqual(firstReview.status, 0, firstReview.stderr);
+  assert.match(firstReview.stdout, /found no issues/);
+
+  const secondReview = runAutoreview(repo, pluginData, {}, ["--checkpoint-id", checkpointId]);
+  assert.strictEqual(secondReview.status, 1);
+  assert.match(secondReview.stderr, /could not find a matching checkpoint/);
+});
+
+test("autoreview checkpoint id finds checkpoints created from a subdirectory cwd", () => {
+  const repo = createRepo();
+  const subdir = path.join(repo, "src");
+  const pluginData = tempDir("auto-review-data-");
+
+  const input = {
+    session_id: "session-subdir",
+    turn_id: "turn-subdir"
+  };
+  const user = runHook("user-prompt-submit.js", hookInput("UserPromptSubmit", subdir, input), {
+    PLUGIN_DATA: pluginData
+  });
+  assert.strictEqual(user.status, 0, user.stderr);
+
+  fs.writeFileSync(path.join(repo, "src", "app.js"), "module.exports = 2;\n", "utf8");
+
+  const post = runHook(
+    "post-tool-use.js",
+    hookInput("PostToolUse", subdir, {
+      ...input,
+      tool_name: "apply_patch",
+      tool_use_id: "tool-subdir",
+      tool_input: { command: "apply patch" },
+      tool_response: { output: "Success" }
+    }),
+    { PLUGIN_DATA: pluginData }
+  );
+  assert.strictEqual(post.status, 0, post.stderr);
+
+  const stop = runStop(subdir, pluginData, {}, input);
+  assert.strictEqual(stop.json.decision, "block");
+  const checkpointId = checkpointIdFromReason(stop.json.reason);
+
+  const review = runAutoreview(repo, pluginData, {}, ["--checkpoint-id", checkpointId]);
+  assert.strictEqual(review.status, 0, review.stderr);
+  assert.match(review.stdout, /found no issues/);
+});
+
+test("autoreview latest finds checkpoints created from a subdirectory cwd", () => {
+  const repo = createRepo();
+  const subdir = path.join(repo, "src");
+  const pluginData = tempDir("auto-review-data-");
+
+  const input = {
+    session_id: "session-subdir-latest",
+    turn_id: "turn-subdir-latest"
+  };
+  const user = runHook("user-prompt-submit.js", hookInput("UserPromptSubmit", subdir, input), {
+    PLUGIN_DATA: pluginData
+  });
+  assert.strictEqual(user.status, 0, user.stderr);
+
+  fs.writeFileSync(path.join(repo, "src", "app.js"), "module.exports = 2;\n", "utf8");
+
+  const post = runHook(
+    "post-tool-use.js",
+    hookInput("PostToolUse", subdir, {
+      ...input,
+      tool_name: "apply_patch",
+      tool_use_id: "tool-subdir-latest",
+      tool_input: { command: "apply patch" },
+      tool_response: { output: "Success" }
+    }),
+    { PLUGIN_DATA: pluginData }
+  );
+  assert.strictEqual(post.status, 0, post.stderr);
+
+  const stop = runStop(subdir, pluginData, {}, input);
+  assert.strictEqual(stop.json.decision, "block");
+
+  const review = runAutoreview(repo, pluginData);
+  assert.strictEqual(review.status, 0, review.stderr);
+  assert.match(review.stdout, /found no issues/);
+});
+
+test("autoreview checkpoint id does not review an unrelated repository", () => {
+  const repoA = createRepo();
+  const repoB = createRepo();
+  const pluginData = tempDir("auto-review-data-");
+
+  markEditedTurn(repoA, pluginData, {
+    sessionId: "session-repo-a",
+    turnId: "turn-repo-a",
+    content: "module.exports = 2;\n",
+    toolUseId: "tool-repo-a"
+  });
+  const stop = runStop(repoA, pluginData, {}, { session_id: "session-repo-a", turn_id: "turn-repo-a" });
+  assert.strictEqual(stop.json.decision, "block");
+  const checkpointId = checkpointIdFromReason(stop.json.reason);
+
+  const review = runAutoreview(repoB, pluginData, {}, ["--checkpoint-id", checkpointId]);
+  assert.strictEqual(review.status, 1);
+  assert.match(review.stderr, /could not find a matching checkpoint/);
+});
+
+test("autoreview checkpoint id does not cross sibling repositories", () => {
+  const workspace = tempDir("auto-review-workspace-");
+  const repoA = createRepoAt(path.join(workspace, "repo-a"));
+  const repoB = createRepoAt(path.join(workspace, "repo-b"));
+  const pluginData = tempDir("auto-review-data-");
+
+  markEditedTurn(repoA, pluginData, {
+    sessionId: "session-sibling-a",
+    turnId: "turn-sibling-a",
+    content: "module.exports = 2;\n",
+    toolUseId: "tool-sibling-a"
+  });
+  const stop = runStop(repoA, pluginData, {}, { session_id: "session-sibling-a", turn_id: "turn-sibling-a" });
+  assert.strictEqual(stop.json.decision, "block");
+  const checkpointId = checkpointIdFromReason(stop.json.reason);
+
+  const review = runAutoreview(workspace, pluginData, {}, ["--checkpoint-id", checkpointId]);
+  assert.strictEqual(review.status, 1);
+  assert.match(review.stderr, /could not find a matching checkpoint/);
+
+  const siblingReview = runAutoreview(repoB, pluginData, {}, ["--checkpoint-id", checkpointId]);
+  assert.strictEqual(siblingReview.status, 1);
+  assert.match(siblingReview.stderr, /could not find a matching checkpoint/);
+});
+
+test("matching snapshot diffs still get distinct checkpoint ids per session", () => {
+  const repo = createRepo();
+  const pluginData = tempDir("auto-review-data-");
+
+  markEditedTurn(repo, pluginData, {
+    sessionId: "session-a",
+    turnId: "turn-a",
+    content: "module.exports = 2;\n",
+    toolUseId: "tool-a"
+  });
+  const firstStop = runStop(repo, pluginData, {}, { session_id: "session-a", turn_id: "turn-a" });
+  const firstCheckpointId = checkpointIdFromReason(firstStop.json.reason);
+
+  fs.writeFileSync(path.join(repo, "src", "app.js"), "module.exports = 1;\n", "utf8");
+  markEditedTurn(repo, pluginData, {
+    sessionId: "session-b",
+    turnId: "turn-b",
+    content: "module.exports = 2;\n",
+    toolUseId: "tool-b"
+  });
+  const secondStop = runStop(repo, pluginData, {}, { session_id: "session-b", turn_id: "turn-b" });
+  const secondCheckpointId = checkpointIdFromReason(secondStop.json.reason);
+
+  assert.notStrictEqual(firstCheckpointId, secondCheckpointId);
+  const firstReview = runAutoreview(repo, pluginData, { MOCK_CODEX_FINDING: "1" }, ["--checkpoint-id", firstCheckpointId]);
+  assert.strictEqual(firstReview.status, 0, firstReview.stderr);
+  assert.match(firstReview.stdout, /Broken behavior/);
+
+  const secondReview = runAutoreview(repo, pluginData, {}, ["--checkpoint-id", secondCheckpointId]);
+  assert.strictEqual(secondReview.status, 0, secondReview.stderr);
+  assert.match(secondReview.stdout, /found no issues/);
+});
+
+test("Stop blocks with setup instructions when the agent is unavailable", () => {
   const repo = createRepo();
   const pluginData = tempDir("auto-review-data-");
   const codexHomeFile = path.join(tempDir("auto-review-codex-home-file-"), "not-a-dir");
@@ -194,8 +612,10 @@ test("Stop blocks with fallback instructions when agent setup fails", () => {
 
   assert.strictEqual(result.status, 0, result.stderr);
   assert.strictEqual(result.json.decision, "block");
-  assert.match(result.json.reason, /could not install the custom agent automatically/);
-  assert.match(result.json.reason, /Exact command the subagent must run/);
+  assert.match(result.json.reason, /could not verify the custom subagent/);
+  assert.match(result.json.reason, /npx -y @just-every\/plugin-auto-review setup/);
+  assert.doesNotMatch(result.json.reason, /Exact command/);
+  assert.doesNotMatch(result.json.reason, /scripts\/autoreview\.js/);
 });
 
 test("autoreview latest reviews tracked file deletions", () => {
@@ -285,7 +705,7 @@ function runStop(repo, pluginData, env = {}, inputOverrides = {}) {
   });
 }
 
-function runAutoreview(repo, pluginData, env = {}) {
+function runAutoreview(repo, pluginData, env = {}, extraArgs = []) {
   fs.chmodSync(MOCK_CODEX, 0o755);
   return childProcess.spawnSync(
     process.execPath,
@@ -294,10 +714,9 @@ function runAutoreview(repo, pluginData, env = {}) {
       "latest",
       "--plugin-data",
       pluginData,
-      "--session",
-      "session-1",
       "--cwd",
-      repo
+      repo,
+      ...extraArgs
     ],
     {
       cwd: repo,
@@ -309,6 +728,63 @@ function runAutoreview(repo, pluginData, env = {}) {
       encoding: "utf8"
     }
   );
+}
+
+function checkpointIdFromReason(reason) {
+  const match = /checkpoint ([a-f0-9]{16})/.exec(reason);
+  assert.ok(match, reason);
+  return match[1];
+}
+
+function createPluginCache(codexHome, version = "9.9.9") {
+  const root = path.join(codexHome, "plugins", "cache", "just-every", "auto-review", version);
+  fs.mkdirSync(path.join(root, "scripts"), { recursive: true });
+  fs.writeFileSync(path.join(root, "scripts", "autoreview.js"), "#!/usr/bin/env node\n", "utf8");
+  return root;
+}
+
+function createRepoAt(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+  run("git", ["init"], dir);
+  run("git", ["config", "user.email", "test@example.com"], dir);
+  run("git", ["config", "user.name", "Test User"], dir);
+  fs.mkdirSync(path.join(dir, "src"));
+  fs.writeFileSync(path.join(dir, "src", "app.js"), "module.exports = 1;\n", "utf8");
+  run("git", ["add", "."], dir);
+  run("git", ["commit", "-m", "init"], dir);
+  return dir;
+}
+
+function run(cmd, args, cwd) {
+  const result = childProcess.spawnSync(cmd, args, { cwd, encoding: "utf8" });
+  assert.strictEqual(result.status, 0, result.stderr);
+  return result.stdout;
+}
+
+function markEditedTurn(repo, pluginData, options) {
+  const input = {
+    session_id: options.sessionId,
+    turn_id: options.turnId
+  };
+  const user = runHook("user-prompt-submit.js", hookInput("UserPromptSubmit", repo, input), {
+    PLUGIN_DATA: pluginData
+  });
+  assert.strictEqual(user.status, 0, user.stderr);
+
+  fs.writeFileSync(path.join(repo, "src", "app.js"), options.content, "utf8");
+
+  const post = runHook(
+    "post-tool-use.js",
+    hookInput("PostToolUse", repo, {
+      ...input,
+      tool_name: "apply_patch",
+      tool_use_id: options.toolUseId,
+      tool_input: { command: "apply patch" },
+      tool_response: { output: "Success" }
+    }),
+    { PLUGIN_DATA: pluginData }
+  );
+  assert.strictEqual(post.status, 0, post.stderr);
 }
 
 function findFiles(root, suffix) {

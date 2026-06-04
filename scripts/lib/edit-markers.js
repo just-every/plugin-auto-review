@@ -14,8 +14,6 @@ function writeEditMarker(paths, input) {
     cwd: input.cwd,
     tool_name: input.tool_name,
     tool_use_id: input.tool_use_id,
-    tool_input: input.tool_input,
-    tool_response: input.tool_response,
     markedAt: new Date().toISOString()
   });
 }

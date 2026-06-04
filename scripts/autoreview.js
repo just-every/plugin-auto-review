@@ -3,7 +3,7 @@
 
 const fs = require("node:fs");
 
-const { readLatestCheckpoint, updateCheckpointStatus } = require("./lib/checkpoints");
+const { readCheckpointForCwd, readLatestCheckpoint, updateCheckpointStatus } = require("./lib/checkpoints");
 const { runReviewLanes } = require("./lib/codex-worker");
 const { mergeReviewResults } = require("./lib/result-merge");
 const { formatFindings, formatReviewFailure } = require("./lib/stop-continuation");
@@ -12,17 +12,23 @@ const { writeJsonAtomic } = require("./lib/state-store");
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.command !== "latest") {
-    throw new Error("usage: autoreview latest --plugin-data <path> --session <id> --cwd <path>");
+    throw new Error("usage: autoreview latest --plugin-data <path> [--session <id>] --cwd <path>");
   }
   process.env.PLUGIN_DATA = options.pluginData;
 
-  const checkpoint = readLatestCheckpoint({
-    pluginData: options.pluginData,
-    sessionId: options.sessionId,
-    cwd: options.cwd
-  });
+  const checkpoint = options.checkpointId
+    ? readCheckpointForCwd({
+        pluginData: options.pluginData,
+        checkpointId: options.checkpointId,
+        cwd: options.cwd
+      })
+    : readLatestCheckpoint({
+        pluginData: options.pluginData,
+        sessionId: options.sessionId,
+        cwd: options.cwd
+      });
   if (!checkpoint) {
-    throw new Error("Auto Code Review could not find a latest checkpoint for this session and cwd.");
+    throw new Error("Auto Code Review could not find a matching checkpoint for this repository.");
   }
 
   const existing = readResult(checkpoint.request.resultJson);
@@ -123,10 +129,13 @@ function parseArgs(args) {
       options.cwd = requireValue(args, (index += 1), arg);
       continue;
     }
+    if (arg === "--checkpoint-id") {
+      options.checkpointId = requireValue(args, (index += 1), arg);
+      continue;
+    }
     throw new Error(`Unknown argument: ${arg}`);
   }
   if (!options.pluginData) throw new Error("--plugin-data is required");
-  if (!options.sessionId) throw new Error("--session is required");
   return options;
 }
 

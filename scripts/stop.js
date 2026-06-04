@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 "use strict";
 
-const path = require("node:path");
-
-const { autoReviewAgentInstalled, installAutoReviewAgent } = require("./lib/agent-setup");
+const {
+  autoReviewAgentInstalled,
+  autoReviewCommand,
+  codexHomeFromPluginData,
+  installAutoReviewAgent,
+  installedPluginRoot,
+  resolveCodexHome
+} = require("./lib/agent-setup");
 const { checkpointIdForSnapshot, writeCheckpoint } = require("./lib/checkpoints");
 const { isChildSession, readHookInput } = require("./lib/hook-input");
 const { writeContinue, writeStopBlock, writeStopMessage } = require("./lib/hook-output");
@@ -23,13 +28,13 @@ async function main() {
 
   const paths = turnPaths(input);
   const markers = readEditMarkers(paths);
-  if (markers.length === 0) {
-    writeContinue();
-    return;
-  }
 
   const baseline = readJsonIfExists(paths.baselineJson);
   if (!baseline) {
+    if (markers.length === 0) {
+      writeContinue();
+      return;
+    }
     writeJsonAtomic(paths.resultJson, failedResult("baseline", "edit markers existed but no captured baseline snapshot", markers));
     writeStopBlock("Auto Code Review could not run because this turn has edit markers but no captured baseline snapshot.");
     return;
@@ -58,9 +63,13 @@ async function main() {
   }
 
   if (scope.changedPaths.length === 0) {
+    if (markers.length === 0) {
+      writeContinue();
+      return;
+    }
     writeJsonAtomic(paths.resultJson, {
       status: "clean",
-      reason: "edit markers existed, but baseline and final snapshots matched",
+      reason: "baseline and final snapshots matched",
       markers,
       snapshotKey: hashText(
         JSON.stringify({
@@ -91,12 +100,13 @@ async function main() {
     return;
   }
 
-  const checkpointId = checkpointIdForSnapshot(snapshotKey);
+  const checkpointId = checkpointIdForSnapshot(snapshotKey, input);
   writeCheckpoint(input, {
     id: checkpointId,
     sessionId: input.session_id,
     turnId: input.turn_id,
     cwd: input.cwd,
+    repoRoot: finalSnapshot.repoRoot,
     model: REVIEW_MODEL,
     reasoning: REVIEW_REASONING,
     serviceTier: REVIEW_SERVICE_TIER,
@@ -147,54 +157,95 @@ function replayExistingResult(existing, changedPathCount) {
 }
 
 function buildAgentInstruction(input, pluginData, checkpointId) {
-  const setup = ensureAgentSetup();
-  const command = [
-    JSON.stringify(process.execPath),
-    JSON.stringify(path.join(__dirname, "autoreview.js")),
-    "latest",
-    "--plugin-data",
-    JSON.stringify(pluginData),
-    "--session",
-    JSON.stringify(input.session_id),
-    "--cwd",
-    JSON.stringify(input.cwd)
-  ].join(" ");
-
+  const setup = ensureAgentSetup(pluginData, {
+    cwd: input.cwd,
+    checkpointId
+  });
+  if (!setup.ready) {
+    const lines = [
+      `Auto Code Review checkpoint ${checkpointId} is pending.`,
+      setup.message,
+      "Do not run the code review in this main thread."
+    ];
+    if (setup.fallbackCommand) {
+      lines.push(
+        "",
+        "For this turn only, spawn a default subagent and ask that subagent to run this command:",
+        setup.fallbackCommand
+      );
+    }
+    return lines.join("\n");
+  }
   const lines = [
     `Auto Code Review checkpoint ${checkpointId} is pending.`,
-    "Use the visible Auto Code Review subagent before finishing.",
+    "Ask the `auto-review` subagent, shown as Auto Code Review, to review this checkpoint for this repository.",
+    `Repository cwd: ${input.cwd}`,
     "",
-    setup.installed
-      ? "If an Auto Code Review subagent is already open, send it the message below. Otherwise spawn agent type `auto-review` with nickname Auto Code Review."
-      : setup.message,
-    "",
-    "Message to send to the subagent:",
-    "$autoreview latest",
-    "",
-    "Exact command the subagent must run:",
-    command,
-    "",
-    "After the subagent reports the review result, try finishing again."
+    "Message for that subagent:",
+    `Review Auto Code Review checkpoint ${checkpointId} for this repository. Repository cwd: ${input.cwd}`,
+    ""
   ];
+  if (setup.note) {
+    lines.push(setup.note, "");
+  }
+  lines.push(
+    "Do not run the code review in this main thread. Wait for the Auto Code Review subagent result, then try finishing again."
+  );
   return lines.join("\n");
 }
 
-function ensureAgentSetup() {
+function ensureAgentSetup(pluginData, reviewTarget = {}) {
+  const codexHome = codexHomeFromPluginData(pluginData) || resolveCodexHome();
   try {
-    if (autoReviewAgentInstalled()) {
-      return { installed: true };
-    }
-    const setup = installAutoReviewAgent();
-    return {
-      installed: false,
-      message: `The Auto Code Review custom agent was installed at ${setup.path} for future sessions. If this running Codex app has not reloaded agent config yet, spawn a default gpt-5.4-mini low-reasoning subagent and tell it not to edit files.`
+    const pluginRoot = installedPluginRoot(codexHome);
+    const agentOptions = {
+      codexHome,
+      pluginData,
+      pluginRoot
     };
+    const installed = autoReviewAgentInstalled(agentOptions);
+    if (!pluginRoot) {
+      if (installed) {
+        return {
+          ready: true,
+          note: "Auto Code Review could not verify the installed plugin cache path. Using the existing subagent configuration; run `npx -y @just-every/plugin-auto-review setup` if the subagent cannot run the review."
+        };
+      }
+      return {
+        ready: false,
+        message: "Auto Code Review could not find its installed plugin cache. Run `npx -y @just-every/plugin-auto-review setup`, reopen Codex if needed, then try finishing again."
+      };
+    }
+    if (!installed) {
+      const setup = installAutoReviewAgent(agentOptions);
+      return {
+        ready: false,
+        message: `Installed the Auto Code Review subagent at ${setup.path}. Reopen Codex so the app loads it, then try finishing again.`,
+        fallbackCommand: fallbackReviewCommand(agentOptions, reviewTarget)
+      };
+    }
+    const setup = installAutoReviewAgent(agentOptions);
+    if (setup.changed) {
+      return {
+        ready: false,
+        message: "Auto Code Review updated its subagent configuration. Reopen Codex so the app loads the updated subagent instructions, then try finishing again.",
+        fallbackCommand: fallbackReviewCommand(agentOptions, reviewTarget)
+      };
+    }
+    return { ready: true };
   } catch (error) {
     return {
-      installed: false,
-      message: `Auto Code Review could not install the custom agent automatically: ${error.message}. Spawn a default gpt-5.4-mini low-reasoning subagent, tell it not to edit files, and give it the exact command below.`
+      ready: false,
+      message: `Auto Code Review could not verify the custom subagent: ${error.message}. Run \`npx -y @just-every/plugin-auto-review setup\`, reopen Codex if needed, then try finishing again.`
     };
   }
+}
+
+function fallbackReviewCommand(options, reviewTarget) {
+  return `${autoReviewCommand({
+    ...options,
+    cwd: reviewTarget.cwd
+  })} --checkpoint-id ${reviewTarget.checkpointId}`;
 }
 
 main().catch((error) => {
