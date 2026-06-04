@@ -1,6 +1,6 @@
 {
   "name": "auto-review",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Auto Code Review reviews Codex edits at turn stop using plugin hooks.",
   "author": {
     "name": "Just Every",
