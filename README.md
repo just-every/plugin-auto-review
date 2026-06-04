@@ -1,5 +1,7 @@
 # Auto Code Review Plugin for Codex
 
+Part of the [Just Every Codex plugin marketplace](https://github.com/just-every/plugins).
+
 Auto Code Review gives Codex a peer programmer that reviews code as it is written. It runs a continuous, token-efficient review loop alongside the main agent, catches issues while the work is still fresh, and feeds clear findings back before the turn is allowed to finish.
 
 The goal is fast, useful feedback without making the main agent reread the whole repository or wait for a heavy review pass after the fact. Auto Code Review watches the code the agent actually changed, asks a dedicated reviewer to inspect that checkpoint, and only interrupts when there is something real to fix.
