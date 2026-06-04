@@ -3,6 +3,7 @@
 const path = require("node:path");
 
 const { AppServerJsonlClient } = require("./app-server-client");
+const { resolveCodexHome } = require("./agent-setup");
 
 const DEFAULT_PLUGIN_ID = "auto-review@just-every";
 
@@ -12,9 +13,9 @@ async function trustPluginHooks(options = {}) {
   const {
     pluginId = DEFAULT_PLUGIN_ID,
     codexPath,
-    codexHome,
     dryRun = false
   } = options;
+  const codexHome = options.codexHome ? resolveCodexHome({ codexHome: options.codexHome }) : null;
   const resolvedCwd = path.resolve(cwd);
   const client = new AppServerJsonlClient({
     codexPath,
@@ -75,10 +76,15 @@ async function trustPluginHooks(options = {}) {
       throw new Error(`Hook trust write completed, but verification did not pass: ${details}`);
     }
 
+    const reportedCodexHome = codexHome
+      || (env?.CODEX_HOME ? resolveCodexHome({ codexHome: env.CODEX_HOME }) : null)
+      || (process.env.CODEX_HOME ? resolveCodexHome({ codexHome: process.env.CODEX_HOME }) : null)
+      || resolveCodexHome();
+
     return {
       cwd: resolvedCwd,
       pluginId,
-      codexHome: codexHome || env?.CODEX_HOME || process.env.CODEX_HOME || "~/.codex",
+      codexHome: reportedCodexHome,
       dryRun,
       updatedCount: targetHooks.length,
       hooks: after.map(summarizeHook).sort((a, b) => a.displayOrder - b.displayOrder)

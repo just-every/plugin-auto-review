@@ -16,7 +16,21 @@ function codexBin() {
   return bin;
 }
 
-async function runReviewLanes({ snapshotDir, jobDir, changedPaths, diff, model }) {
+const REVIEW_MODEL = "gpt-5.5";
+const REVIEW_REASONING = "medium";
+const REVIEW_SERVICE_TIER = "default";
+const ALLOWED_REVIEW_MODELS = new Set(["gpt-5.5"]);
+
+async function runReviewLanes({
+  snapshotDir,
+  jobDir,
+  changedPaths,
+  diff,
+  model = REVIEW_MODEL,
+  reasoning = REVIEW_REASONING,
+  serviceTier = REVIEW_SERVICE_TIER
+}) {
+  validateReviewModel(model);
   ensureDir(jobDir);
   const schemaPath = path.join(snapshotDir, ".auto-review.schema.json");
   writeJsonAtomic(schemaPath, REVIEW_SCHEMA);
@@ -29,18 +43,22 @@ async function runReviewLanes({ snapshotDir, jobDir, changedPaths, diff, model }
       lastMessagePath: path.join(snapshotDir, `.auto-review.${lane.id}.last-message.json`),
       prompt: buildReviewPrompt({ lane, changedPaths, diff }),
       changedPaths,
-      model
+      model,
+      reasoning,
+      serviceTier
     })
   );
   return Promise.all(lanes);
 }
 
-function runOneLane({ lane, snapshotDir, schemaPath, lastMessagePath, prompt, changedPaths, model }) {
+function runOneLane({ lane, snapshotDir, schemaPath, lastMessagePath, prompt, changedPaths, model, reasoning, serviceTier }) {
   return new Promise((resolve) => {
     const args = [
       "exec",
       "--json",
       "--ephemeral",
+      "--ignore-user-config",
+      "--ignore-rules",
       "--skip-git-repo-check",
       "--sandbox",
       "read-only",
@@ -54,7 +72,9 @@ function runOneLane({ lane, snapshotDir, schemaPath, lastMessagePath, prompt, ch
       snapshotDir
     ];
     if (model) args.push("-m", model);
-    args.push("-c", 'model_reasoning_effort="high"', "-");
+    args.push("-c", `model_reasoning_effort=${JSON.stringify(reasoning)}`);
+    args.push("-c", `service_tier=${JSON.stringify(serviceTier)}`);
+    args.push("-");
 
     const child = childProcess.spawn(codexBin(), args, {
       cwd: snapshotDir,
@@ -105,6 +125,12 @@ function runOneLane({ lane, snapshotDir, schemaPath, lastMessagePath, prompt, ch
   });
 }
 
+function validateReviewModel(model) {
+  if (!ALLOWED_REVIEW_MODELS.has(model)) {
+    throw new Error(`unsupported Auto Code Review model: ${model}`);
+  }
+}
+
 function failedLane(lane, error, stdout, stderr) {
   return {
     lane: lane.id,
@@ -130,5 +156,9 @@ function parseUsage(stdout) {
 }
 
 module.exports = {
-  runReviewLanes
+  REVIEW_MODEL,
+  REVIEW_REASONING,
+  REVIEW_SERVICE_TIER,
+  runReviewLanes,
+  validateReviewModel
 };

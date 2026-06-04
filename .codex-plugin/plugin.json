@@ -1,7 +1,8 @@
 {
   "name": "auto-review",
   "version": "0.1.2",
-  "description": "Automatically reviews Codex edits at turn stop using plugin hooks.",
+  "description": "Auto Code Review reviews Codex edits at turn stop using plugin hooks.",
+  "skills": "./skills/",
   "author": {
     "name": "Just Every",
     "url": "https://github.com/just-every"
@@ -17,9 +18,9 @@
     "automation"
   ],
   "interface": {
-    "displayName": "Auto Review",
-    "shortDescription": "Review edited turns automatically",
-    "longDescription": "Auto Review uses Codex hooks to capture a turn baseline, mark successful apply_patch edits, and run a strict schema-validated review at Stop before the turn completes.",
+    "displayName": "Auto Code Review",
+    "shortDescription": "Review edited Codex turns automatically",
+    "longDescription": "Auto Code Review uses Codex hooks to capture a turn baseline, mark successful apply_patch edits, and ask a visible Auto Code Review subagent to run a strict schema-validated checkpoint review before the turn completes.",
     "developerName": "Just Every",
     "category": "Developer Tools",
     "capabilities": [
@@ -27,9 +28,9 @@
       "Write"
     ],
     "defaultPrompt": [
-      "Explain Auto Review hook behavior",
-      "Check whether Auto Review is enabled",
-      "Review Auto Review state"
+      "Explain Auto Code Review hook behavior",
+      "Check whether Auto Code Review is enabled",
+      "Review Auto Code Review state"
     ],
     "brandColor": "#0F766E",
     "composerIcon": "./assets/icon.png",

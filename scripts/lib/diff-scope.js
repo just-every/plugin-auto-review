@@ -32,7 +32,7 @@ function computeDiffScope(baseDir, finalDir, baseManifest, finalManifest, option
   }
   if (changedPaths.length > maxChangedPaths) {
     throw new Error(
-      `Auto Review scope has ${changedPaths.length} changed paths, exceeding AUTO_REVIEW_MAX_CHANGED_PATHS=${maxChangedPaths}`
+      `Auto Code Review scope has ${changedPaths.length} changed paths, exceeding AUTO_REVIEW_MAX_CHANGED_PATHS=${maxChangedPaths}`
     );
   }
 
@@ -52,7 +52,7 @@ function computeDiffScope(baseDir, finalDir, baseManifest, finalManifest, option
   const diffBytes = Buffer.byteLength(diff, "utf8");
   if (diffBytes > (options.maxDiffBytes || maxDiffBytes)) {
     throw new Error(
-      `Auto Review diff is ${diffBytes} bytes, exceeding AUTO_REVIEW_MAX_DIFF_BYTES=${options.maxDiffBytes || maxDiffBytes}`
+      `Auto Code Review diff is ${diffBytes} bytes, exceeding AUTO_REVIEW_MAX_DIFF_BYTES=${options.maxDiffBytes || maxDiffBytes}`
     );
   }
 

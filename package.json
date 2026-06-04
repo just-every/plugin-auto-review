@@ -1,7 +1,7 @@
 {
   "name": "@just-every/plugin-auto-review",
   "version": "0.1.2",
-  "description": "Codex Auto Review plugin using hooks.",
+  "description": "Codex Auto Code Review plugin using hooks.",
   "license": "MIT",
   "homepage": "https://github.com/just-every/plugin-auto-review#readme",
   "repository": {
@@ -9,6 +9,7 @@
     "url": "git+https://github.com/just-every/plugin-auto-review.git"
   },
   "bin": {
+    "autoreview": "scripts/autoreview.js",
     "plugin-auto-review": "scripts/trust-hooks.js"
   },
   "files": [
@@ -16,12 +17,14 @@
     "assets/**/*",
     "hooks/**/*",
     "scripts/**/*",
+    "skills/**/*",
     "README.md",
     "package.json"
   ],
   "scripts": {
+    "setup": "node scripts/trust-hooks.js setup",
     "test": "node --test test/*.test.js",
-    "trust-hooks": "node scripts/trust-hooks.js"
+    "trust-hooks": "node scripts/trust-hooks.js trust-hooks"
   },
   "publishConfig": {
     "access": "public"

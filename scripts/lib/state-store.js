@@ -7,7 +7,7 @@ const path = require("node:path");
 function pluginDataRoot() {
   const root = process.env.PLUGIN_DATA || process.env.CLAUDE_PLUGIN_DATA;
   if (!root || root.trim() === "") {
-    throw new Error("PLUGIN_DATA is required for Auto Review state");
+    throw new Error("PLUGIN_DATA is required for Auto Code Review state");
   }
   return path.resolve(root);
 }
@@ -32,7 +32,6 @@ function turnPaths(input) {
     baselineJson: path.join(dir, "baseline.json"),
     finalJson: path.join(dir, "final.json"),
     markersDir: path.join(dir, "markers"),
-    leasesDir: path.join(dir, "leases"),
     resultJson: path.join(dir, "result.json"),
     baselineSnapshotDir: path.join(dir, "snapshots", "baseline"),
     finalSnapshotDir: path.join(dir, "snapshots", "final"),

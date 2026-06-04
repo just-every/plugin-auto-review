@@ -2,7 +2,7 @@
 
 function buildReviewPrompt({ lane, changedPaths, diff }) {
   return [
-    "You are a Codex Auto Review worker.",
+    "You are a Codex Auto Code Review worker.",
     `Review lens: ${lane.lens}`,
     "",
     "Review only the provided baseline-to-final diff and the files named in the changed path list.",

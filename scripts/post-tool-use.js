@@ -26,7 +26,7 @@ function main() {
 
   const paths = turnPaths(input);
   writeEditMarker(paths, input);
-  writePostToolAdditionalContext("Auto Review marked this edited turn for a Stop review.");
+  writePostToolAdditionalContext("Auto Code Review marked this edited turn for a Stop checkpoint review.");
 }
 
 try {

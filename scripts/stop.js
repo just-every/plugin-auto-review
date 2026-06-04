@@ -1,22 +1,22 @@
 #!/usr/bin/env node
 "use strict";
 
-const fs = require("node:fs");
+const path = require("node:path");
 
+const { autoReviewAgentInstalled, installAutoReviewAgent } = require("./lib/agent-setup");
+const { checkpointIdForSnapshot, writeCheckpoint } = require("./lib/checkpoints");
 const { isChildSession, readHookInput } = require("./lib/hook-input");
 const { writeContinue, writeStopBlock, writeStopMessage } = require("./lib/hook-output");
 const { readEditMarkers } = require("./lib/edit-markers");
-const { acquireLease } = require("./lib/leases");
 const { materializeSnapshot } = require("./lib/snapshot");
 const { computeDiffScope } = require("./lib/diff-scope");
-const { runReviewLanes } = require("./lib/codex-worker");
-const { mergeReviewResults } = require("./lib/result-merge");
+const { REVIEW_MODEL, REVIEW_REASONING, REVIEW_SERVICE_TIER } = require("./lib/codex-worker");
 const { formatFindings, formatReviewFailure } = require("./lib/stop-continuation");
 const { hashText, readJsonIfExists, turnPaths, writeJsonAtomic } = require("./lib/state-store");
 
 async function main() {
   const input = readHookInput("Stop");
-  if (isChildSession() || input.stop_hook_active === true) {
+  if (isChildSession()) {
     writeContinue();
     return;
   }
@@ -30,13 +30,15 @@ async function main() {
 
   const baseline = readJsonIfExists(paths.baselineJson);
   if (!baseline) {
-    writeStopBlock("Auto Review could not run because this turn has edit markers but no captured baseline snapshot.");
+    writeJsonAtomic(paths.resultJson, failedResult("baseline", "edit markers existed but no captured baseline snapshot", markers));
+    writeStopBlock("Auto Code Review could not run because this turn has edit markers but no captured baseline snapshot.");
     return;
   }
 
   const finalSnapshot = materializeSnapshot(input.cwd, paths.finalSnapshotDir);
   if (!finalSnapshot) {
-    writeStopBlock("Auto Review could not run because the working directory is no longer a git worktree.");
+    writeJsonAtomic(paths.resultJson, failedResult("snapshot", "working directory is no longer a git worktree", markers));
+    writeStopBlock("Auto Code Review could not run because the working directory is no longer a git worktree.");
     return;
   }
   writeJsonAtomic(paths.finalJson, finalSnapshot);
@@ -51,7 +53,7 @@ async function main() {
     );
   } catch (error) {
     writeJsonAtomic(paths.resultJson, failedResult("scope", error.message, markers));
-    writeStopBlock(`Auto Review could not prepare the review scope: ${error.message}`);
+    writeStopBlock(`Auto Code Review could not prepare the review scope: ${error.message}`);
     return;
   }
 
@@ -60,9 +62,17 @@ async function main() {
       status: "clean",
       reason: "edit markers existed, but baseline and final snapshots matched",
       markers,
+      snapshotKey: hashText(
+        JSON.stringify({
+          repo: finalSnapshot.repoRoot,
+          base: baseline.treeHash,
+          final: finalSnapshot.treeHash,
+          changedPaths: scope.changedPaths
+        })
+      ),
       reviewedAt: new Date().toISOString()
     });
-    writeStopMessage("Auto Review found no final code changes to review.");
+    writeStopMessage("Auto Code Review found no final code changes to review.");
     return;
   }
 
@@ -74,54 +84,31 @@ async function main() {
       changedPaths: scope.changedPaths
     })
   );
-  const lease = acquireLease(paths, snapshotKey);
-  if (!lease.acquired) {
-    const existing = readJsonIfExists(paths.resultJson);
-    if (existing) {
-      replayExistingResult(existing);
-    } else {
-      writeStopBlock("Auto Review is already running for this snapshot. Wait for that review before finishing.");
-    }
+
+  const existing = readJsonIfExists(paths.resultJson);
+  if (existing && existing.snapshotKey === snapshotKey) {
+    replayExistingResult(existing, scope.changedPaths.length);
     return;
   }
 
-  fs.rmSync(paths.jobDir, { recursive: true, force: true });
-  let laneResults;
-  try {
-    laneResults = await runReviewLanes({
-      snapshotDir: paths.finalSnapshotDir,
-      jobDir: paths.jobDir,
-      changedPaths: scope.changedPaths,
-      diff: scope.diff,
-      model: process.env.AUTO_REVIEW_MODEL || input.model
-    });
-  } catch (error) {
-    const result = failedResult("runner", error.message, markers);
-    writeJsonAtomic(paths.resultJson, result);
-    writeStopBlock(formatReviewFailure({ failures: [{ lane: "runner", error: error.message }] }));
-    return;
-  }
-
-  const merged = mergeReviewResults(laneResults);
-  const result = {
-    ...merged,
+  const checkpointId = checkpointIdForSnapshot(snapshotKey);
+  writeCheckpoint(input, {
+    id: checkpointId,
+    sessionId: input.session_id,
+    turnId: input.turn_id,
+    cwd: input.cwd,
+    model: REVIEW_MODEL,
+    reasoning: REVIEW_REASONING,
+    serviceTier: REVIEW_SERVICE_TIER,
+    paths,
+    resultJson: paths.resultJson,
+    scope,
     markers,
-    changedPaths: scope.changedPaths,
-    diffBytes: scope.diffBytes,
     snapshotKey,
-    reviewedAt: new Date().toISOString()
-  };
-  writeJsonAtomic(paths.resultJson, result);
+    createdAt: new Date().toISOString()
+  });
 
-  if (merged.status === "failed") {
-    writeStopBlock(formatReviewFailure(merged));
-    return;
-  }
-  if (merged.status === "findings") {
-    writeStopBlock(formatFindings(merged.findings));
-    return;
-  }
-  writeStopMessage(`Auto Review checked ${scope.changedPaths.length} changed path${scope.changedPaths.length === 1 ? "" : "s"} and found no issues.`);
+  writeStopBlock(buildAgentInstruction(input, paths.root, checkpointId));
 }
 
 function failedResult(stage, error, markers) {
@@ -134,12 +121,21 @@ function failedResult(stage, error, markers) {
   };
 }
 
-function replayExistingResult(existing) {
+function replayExistingResult(existing, changedPathCount) {
   if (existing.status === "failed") {
-    if (existing.failures) {
+    if (Array.isArray(existing.failures)) {
       writeStopBlock(formatReviewFailure(existing));
     } else {
-      writeStopBlock(`Auto Review failed before it could sign off on this turn.\n- ${existing.stage || "review"}: ${existing.error || "unknown failure"}`);
+      writeStopBlock(
+        formatReviewFailure({
+          failures: [
+            {
+              lane: existing.stage || "review",
+              error: existing.error || "unknown failure"
+            }
+          ]
+        })
+      );
     }
     return;
   }
@@ -147,9 +143,60 @@ function replayExistingResult(existing) {
     writeStopBlock(formatFindings(existing.findings || []));
     return;
   }
-  writeStopMessage(`Auto Review already processed this snapshot with status: ${existing.status}.`);
+  writeStopMessage(`Auto Code Review checked ${changedPathCount} changed path${changedPathCount === 1 ? "" : "s"} and found no issues.`);
+}
+
+function buildAgentInstruction(input, pluginData, checkpointId) {
+  const setup = ensureAgentSetup();
+  const command = [
+    JSON.stringify(process.execPath),
+    JSON.stringify(path.join(__dirname, "autoreview.js")),
+    "latest",
+    "--plugin-data",
+    JSON.stringify(pluginData),
+    "--session",
+    JSON.stringify(input.session_id),
+    "--cwd",
+    JSON.stringify(input.cwd)
+  ].join(" ");
+
+  const lines = [
+    `Auto Code Review checkpoint ${checkpointId} is pending.`,
+    "Use the visible Auto Code Review subagent before finishing.",
+    "",
+    setup.installed
+      ? "If an Auto Code Review subagent is already open, send it the message below. Otherwise spawn agent type `auto-review` with nickname Auto Code Review."
+      : setup.message,
+    "",
+    "Message to send to the subagent:",
+    "$autoreview latest",
+    "",
+    "Exact command the subagent must run:",
+    command,
+    "",
+    "After the subagent reports the review result, try finishing again."
+  ];
+  return lines.join("\n");
+}
+
+function ensureAgentSetup() {
+  try {
+    if (autoReviewAgentInstalled()) {
+      return { installed: true };
+    }
+    const setup = installAutoReviewAgent();
+    return {
+      installed: false,
+      message: `The Auto Code Review custom agent was installed at ${setup.path} for future sessions. If this running Codex app has not reloaded agent config yet, spawn a default gpt-5.4-mini low-reasoning subagent and tell it not to edit files.`
+    };
+  } catch (error) {
+    return {
+      installed: false,
+      message: `Auto Code Review could not install the custom agent automatically: ${error.message}. Spawn a default gpt-5.4-mini low-reasoning subagent, tell it not to edit files, and give it the exact command below.`
+    };
+  }
 }
 
 main().catch((error) => {
-  writeStopBlock(`Auto Review failed: ${error.message}`);
+  writeStopBlock(`Auto Code Review could not prepare the checkpoint review: ${error.message}`);
 });

@@ -3,9 +3,11 @@
 const assert = require("node:assert");
 const childProcess = require("node:child_process");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
+const { resolveCodexHome } = require("../scripts/lib/agent-setup");
 const { trustPluginHooks } = require("../scripts/lib/hooks-trust");
 const { tempDir } = require("./helpers");
 
@@ -97,6 +99,7 @@ test("trustPluginHooks defaults to npm's invoking directory when available", asy
 test("trust-hooks CLI accepts the npx-style trust-hooks subcommand", () => {
   fs.chmodSync(MOCK_APP_SERVER_CODEX, 0o755);
   const cwd = tempDir("auto-review-cli-workspace-");
+  const codexHome = tempDir("auto-review-codex-home-");
   const result = childProcess.spawnSync(
     process.execPath,
     [
@@ -106,7 +109,7 @@ test("trust-hooks CLI accepts the npx-style trust-hooks subcommand", () => {
       "--codex",
       MOCK_APP_SERVER_CODEX,
       "--codex-home",
-      "/tmp/auto-review-codex-home"
+      codexHome
     ],
     {
       cwd,
@@ -119,8 +122,125 @@ test("trust-hooks CLI accepts the npx-style trust-hooks subcommand", () => {
   );
 
   assert.strictEqual(result.status, 0, result.stderr);
+  assert.match(result.stdout, /`trust-hooks` is kept for compatibility/);
   assert.match(result.stdout, /Would trust and enable 3 auto-review@just-every hooks/);
+  assert.match(result.stdout, /Would install Auto Code Review agent/);
   assert.match(result.stdout, new RegExp(`CWD: ${escapeRegExp(cwd)}`));
+  assert.strictEqual(fs.existsSync(path.join(codexHome, "agents", "auto-review.toml")), false);
+});
+
+test("trust-hooks CLI without a subcommand remains trust-only", () => {
+  fs.chmodSync(MOCK_APP_SERVER_CODEX, 0o755);
+  const cwd = tempDir("auto-review-cli-workspace-");
+  const codexHome = tempDir("auto-review-codex-home-");
+  const cliCommands = path.join(tempDir("auto-review-cli-commands-"), "commands.jsonl");
+  const result = childProcess.spawnSync(
+    process.execPath,
+    [
+      path.join(__dirname, "..", "scripts", "trust-hooks.js"),
+      "--dry-run",
+      "--codex",
+      MOCK_APP_SERVER_CODEX,
+      "--codex-home",
+      codexHome
+    ],
+    {
+      cwd,
+      env: {
+        ...process.env,
+        INIT_CWD: cwd,
+        MOCK_CODEX_CLI_COMMANDS: cliCommands
+      },
+      encoding: "utf8"
+    }
+  );
+
+  assert.strictEqual(result.status, 0, result.stderr);
+  assert.match(result.stdout, /`trust-hooks` is kept for compatibility/);
+  assert.strictEqual(fs.existsSync(cliCommands), false);
+});
+
+test("trust-hooks CLI installs the Auto Code Review custom agent", () => {
+  fs.chmodSync(MOCK_APP_SERVER_CODEX, 0o755);
+  const cwd = tempDir("auto-review-cli-workspace-");
+  const codexHome = tempDir("auto-review-codex-home-");
+  const cliCommands = path.join(tempDir("auto-review-cli-commands-"), "commands.jsonl");
+  const result = childProcess.spawnSync(
+    process.execPath,
+    [
+      path.join(__dirname, "..", "scripts", "trust-hooks.js"),
+      "setup",
+      "--codex",
+      MOCK_APP_SERVER_CODEX,
+      "--codex-home",
+      codexHome
+    ],
+    {
+      cwd,
+      env: {
+        ...process.env,
+        INIT_CWD: cwd,
+        MOCK_CODEX_CLI_COMMANDS: cliCommands
+      },
+      encoding: "utf8"
+    }
+  );
+
+  assert.strictEqual(result.status, 0, result.stderr);
+  const agentPath = path.join(codexHome, "agents", "auto-review.toml");
+  assert.match(result.stdout, /Auto Code Review setup complete/);
+  assert.match(result.stdout, /plugin marketplace add just-every\/plugins: completed/);
+  assert.match(result.stdout, /plugin marketplace upgrade just-every: completed/);
+  assert.match(result.stdout, /plugin add auto-review@just-every: completed/);
+  assert.match(result.stdout, /Installed Auto Code Review agent/);
+  assert.match(fs.readFileSync(agentPath, "utf8"), /name = "auto-review"/);
+  assert.match(fs.readFileSync(agentPath, "utf8"), /nickname_candidates = \["Auto Code Review"\]/);
+  assert.deepStrictEqual(readCliCommands(cliCommands), [
+    ["plugin", "marketplace", "add", "just-every/plugins"],
+    ["plugin", "marketplace", "upgrade", "just-every"],
+    ["plugin", "add", "auto-review@just-every"]
+  ]);
+});
+
+test("setup with custom plugin id installs and trusts that plugin only", () => {
+  fs.chmodSync(MOCK_APP_SERVER_CODEX, 0o755);
+  const cwd = tempDir("auto-review-cli-workspace-");
+  const codexHome = tempDir("auto-review-codex-home-");
+  const cliCommands = path.join(tempDir("auto-review-cli-commands-"), "commands.jsonl");
+  const result = childProcess.spawnSync(
+    process.execPath,
+    [
+      path.join(__dirname, "..", "scripts", "trust-hooks.js"),
+      "setup",
+      "--plugin-id",
+      "auto-review@local",
+      "--codex",
+      MOCK_APP_SERVER_CODEX,
+      "--codex-home",
+      codexHome
+    ],
+    {
+      cwd,
+      env: {
+        ...process.env,
+        INIT_CWD: cwd,
+        MOCK_APP_SERVER_PLUGIN_ID: "auto-review@local",
+        MOCK_CODEX_CLI_COMMANDS: cliCommands
+      },
+      encoding: "utf8"
+    }
+  );
+
+  assert.strictEqual(result.status, 0, result.stderr);
+  assert.match(result.stdout, /plugin add auto-review@local: completed/);
+  assert.doesNotMatch(result.stdout, /marketplace add/);
+  assert.deepStrictEqual(readCliCommands(cliCommands), [
+    ["plugin", "add", "auto-review@local"]
+  ]);
+});
+
+test("Auto Code Review agent setup expands tilde codex homes", () => {
+  assert.strictEqual(resolveCodexHome({ codexHome: "~/.codex" }), path.join(os.homedir(), ".codex"));
 });
 
 test("trustPluginHooks fails when the plugin hooks are not installed", async () => {
@@ -141,6 +261,15 @@ test("trustPluginHooks fails when the plugin hooks are not installed", async () 
 });
 
 function readRequests(file) {
+  return fs
+    .readFileSync(file, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
+function readCliCommands(file) {
   return fs
     .readFileSync(file, "utf8")
     .trim()

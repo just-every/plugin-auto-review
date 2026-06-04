@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 "use strict";
 
+const { installAutoReviewAgent } = require("./lib/agent-setup");
 const { DEFAULT_PLUGIN_ID, trustPluginHooks } = require("./lib/hooks-trust");
+const { installAutoReviewPlugin } = require("./lib/plugin-install");
 
 async function main() {
-  const options = parseArgs(normalizeArgs(process.argv.slice(2)));
-  const result = await trustPluginHooks(options);
+  const { command, args } = normalizeArgs(process.argv.slice(2));
+  const options = parseArgs(args);
+  options.command = command;
+  const result = await setupAutoReview(options);
   if (options.json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return;
@@ -14,10 +18,10 @@ async function main() {
 }
 
 function normalizeArgs(args) {
-  if (args[0] === "trust-hooks") {
-    return args.slice(1);
+  if (args[0] === "trust-hooks" || args[0] === "setup") {
+    return { command: args[0], args: args.slice(1) };
   }
-  return args;
+  return { command: "trust-hooks", args };
 }
 
 function parseArgs(args) {
@@ -57,6 +61,23 @@ function parseArgs(args) {
   return options;
 }
 
+async function setupAutoReview(options) {
+  const pluginInstall = options.command === "setup"
+    ? installAutoReviewPlugin(options)
+    : [];
+  const hooks = await trustPluginHooks(options);
+  const agent = installAutoReviewAgent({
+    codexHome: hooks.codexHome,
+    dryRun: options.dryRun
+  });
+  return {
+    ...hooks,
+    command: options.command,
+    pluginInstall,
+    agent
+  };
+}
+
 function requireValue(args, index, flag) {
   const value = args[index];
   if (!value || value.startsWith("--")) {
@@ -67,11 +88,23 @@ function requireValue(args, index, flag) {
 
 function formatReport(result) {
   const action = result.dryRun ? "Would trust and enable" : "Trusted and enabled";
+  const agentAction = result.agent.changed
+    ? result.dryRun
+      ? "Would install"
+      : "Installed"
+    : "Already installed";
   const lines = [
+    result.command === "trust-hooks"
+      ? "`trust-hooks` is kept for compatibility; use `setup` for full installation."
+      : "Auto Code Review setup complete.",
     `${action} ${result.updatedCount} ${result.pluginId} hook${result.updatedCount === 1 ? "" : "s"}.`,
     `CODEX_HOME: ${result.codexHome}`,
-    `CWD: ${result.cwd}`
+    `CWD: ${result.cwd}`,
+    `${agentAction} Auto Code Review agent: ${result.agent.path}`
   ];
+  for (const step of result.pluginInstall || []) {
+    lines.push(`- ${step.command}: ${step.status}`);
+  }
   for (const hook of result.hooks) {
     const matcher = hook.matcher ? ` matcher=${hook.matcher}` : "";
     lines.push(`- ${hook.eventName}${matcher}: ${hook.trustStatus}, enabled=${hook.enabled}`);
@@ -80,9 +113,11 @@ function formatReport(result) {
 }
 
 function helpText() {
-  return `Usage: plugin-auto-review trust-hooks [options]
+  return `Usage: plugin-auto-review setup [options]
+       plugin-auto-review trust-hooks [options]
 
-Trust and enable Auto Review plugin hooks for a Codex home.
+setup installs the marketplace/plugin, trusts and enables hooks, then installs the Auto Code Review custom agent.
+trust-hooks is kept for compatibility and only runs hook trust plus agent setup.
 
 Options:
   --cwd <path>          Project cwd used to discover effective hooks (default: npm's invoking directory, then current directory)

@@ -1,7 +1,7 @@
 "use strict";
 
 function formatReviewFailure(merged) {
-  const lines = ["Auto Review failed before it could sign off on this turn."];
+  const lines = ["Auto Code Review failed before it could sign off on this turn."];
   for (const failure of merged.failures.slice(0, 4)) {
     lines.push(`- ${failure.lane}: ${failure.error}`);
     const stderr = String(failure.stderr || "").trim();
@@ -11,7 +11,7 @@ function formatReviewFailure(merged) {
 }
 
 function formatFindings(findings) {
-  const lines = [`Auto Review found ${findings.length} issue${findings.length === 1 ? "" : "s"} to address before finishing.`];
+  const lines = [`Auto Code Review found ${findings.length} issue${findings.length === 1 ? "" : "s"} to address before finishing.`];
   for (const finding of findings.slice(0, 10)) {
     const location = finding.line === null ? finding.file : `${finding.file}:${finding.line}`;
     lines.push(`- [${finding.severity}] ${location} - ${finding.title}`);

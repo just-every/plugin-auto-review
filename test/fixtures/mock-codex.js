@@ -4,6 +4,9 @@
 const fs = require("node:fs");
 
 const args = process.argv.slice(2);
+if (process.env.MOCK_CODEX_ARGV_LOG) {
+  fs.appendFileSync(process.env.MOCK_CODEX_ARGV_LOG, `${JSON.stringify(args)}\n`, "utf8");
+}
 const lastMessageIndex = args.indexOf("--output-last-message");
 if (lastMessageIndex === -1 || !args[lastMessageIndex + 1]) {
   process.stderr.write("missing --output-last-message\n");
@@ -17,6 +20,10 @@ process.stdin.on("data", (chunk) => {
   stdin += chunk;
 });
 process.stdin.on("end", () => {
+  if (process.env.MOCK_CODEX_STDIN_LOG) {
+    fs.appendFileSync(process.env.MOCK_CODEX_STDIN_LOG, `${JSON.stringify(stdin)}\n`, "utf8");
+  }
+
   if (process.env.MOCK_CODEX_EXIT) {
     process.stderr.write("mock codex requested failure\n");
     process.exit(Number(process.env.MOCK_CODEX_EXIT));

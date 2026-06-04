@@ -5,8 +5,14 @@ const fs = require("node:fs");
 const readline = require("node:readline");
 
 if (process.argv[2] !== "app-server" || process.argv[3] !== "--listen" || process.argv[4] !== "stdio://") {
-  process.stderr.write(`unexpected mock codex args: ${process.argv.slice(2).join(" ")}\n`);
-  process.exit(64);
+  if (process.env.MOCK_CODEX_CLI_COMMANDS) {
+    fs.appendFileSync(process.env.MOCK_CODEX_CLI_COMMANDS, `${JSON.stringify(process.argv.slice(2))}\n`, "utf8");
+  }
+  if (process.env.MOCK_CODEX_CLI_FAIL === "1") {
+    process.stderr.write("mock codex cli failure\n");
+    process.exit(1);
+  }
+  process.exit(0);
 }
 
 const requestsPath = process.env.MOCK_APP_SERVER_REQUESTS;
